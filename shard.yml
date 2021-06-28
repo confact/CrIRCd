@@ -1,0 +1,18 @@
+name: Circed
+version: 0.1.0
+
+authors:
+  - Håkan Nylén <hakan@dun.se>
+
+targets:
+  circed:
+    main: src/circed.cr
+
+crystal: 1.0.0
+
+dependencies:
+  tasker:
+    github: spider-gazelle/tasker
+    version: ~> 2.0
+
+license: MIT
