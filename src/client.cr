@@ -1,6 +1,8 @@
 require "tasker"
+
 module Circed
   class Client
+    include Pinger
     class ClosedClient < Exception; end
     class PingStoppedException < Exception; end
 
@@ -13,11 +15,10 @@ module Circed
     @last_checked : Time?
     @last_answered : Time?
 
-    @task_ping : Tasker::Repeat(Int32)?
+    @task_ping : Tasker::Repeat(Int32) | Tasker::Repeat(Nil) | Nil
     @task_pong_check : Tasker::Repeat(Int32) | Tasker::Repeat(Nil) | Nil
 
     def initialize(@socket : Socket)
-
     end
 
     def setup
@@ -25,23 +26,56 @@ module Circed
     end
 
     def message_handling
-      while message = @socket.gets
-        Log.info { "got this message: #{message} "}
+      while message = socket.gets
+        break if socket.closed?
+        Log.debug { "got this message: #{message} " }
         payload = Payload.parse_message(message.to_s)
 
-        Log.info { "message: #{payload.inspect} "}
+        Log.info { "message: #{payload.inspect} " }
         return if payload.nil?
 
-        set_nickname(payload.message) if payload.message_type == "NICK"
-        set_user(payload.message) if payload.message_type == "USER"
-        pong if payload.message_type == "PONG"
+        case payload.message_type
+        when "NICK"
+          set_nickname(payload.message)
+        when "USER"
+          set_user(payload.message)
+        when "PONG"
+          pong
+        when "PING"
+          ping
+        when "PRIVMSG"
+          private_message(payload.receiver.to_s, payload.message)
+        end
+      end
+      if socket.closed?
+        Server.remove_connection(nickname.to_s) unless nickname.to_s.empty?
       end
     end
 
-    def set_nickname(nickname)
-      @nickname = nickname
-      Log.info { "Set nickname to: #{nickname} "}
-      @socket.send("NICK #{@nickname} localhost")
+    def set_nickname(new_nickname)
+      if Server.nickname_used?(new_nickname)
+        send_message(":localhost", Numerics::ERR_NICKNAMEINUSE, new_nickname, ":Nickname is already in used")
+        return
+      end
+      changed = !nickname.to_s.empty?
+      old_nickname = nickname
+
+      if changed
+        begin
+          Log.debug { "changing nickname to: #{new_nickname} " }
+          Server.changed_nickname(old_nickname.to_s, new_nickname)
+          send_message(":#{old_nickname}", "NICK", new_nickname)
+          @nickname = new_nickname
+        rescue e : Exception
+          Log.debug { "error, nickname is not used: #{nickname} " }
+          @nickname = old_nickname
+          send_message(":localhost", Numerics::ERR_ERRONEUSNICKNAME, old_nickname, ":Nickname is not used.")
+        end
+      else
+        Log.debug { "Set nickname to: #{new_nickname} " }
+        @nickname = new_nickname
+        send_message(":localhost", "NICK", new_nickname)
+      end
     end
 
     def set_user(user_message)
@@ -49,17 +83,23 @@ module Circed
       @mode = users_messages[1]
       @user = users_messages.first
       @realname = users_messages[3].sub(":", "")
-      Log.info { "Set user to: #{@user} with real name #{@realname}"}
+      Log.debug { "Set user to: #{user} with real name #{realname}" }
       Circed::Server.welcome_message(self)
       pinger
     end
 
-    def join_channel
+    def private_message(receiver : String, message : String)
+      client = Server.get_client(receiver)
 
+      return unless client
+
+      client.not_nil!.send_message(":#{nickname}!#{user}@#{socket.remote_address}", "PRIVMSG", receiver, "#{message}")
+    end
+
+    def join_channel
     end
 
     def part_channel
-
     end
 
     def quit
@@ -67,45 +107,34 @@ module Circed
     end
 
     def send_message(message)
-      @socket.send(message)
+      Log.info { message }
+      socket.puts(message + "\n")
+    end
+
+    def notice(message)
+      send_message(":#{}")
     end
 
     def send_message(prefix, command, *params)
-      message = "#{prefix} #{command} #{params.join(" ")}"
+      message = "#{prefix} #{command} #{params.join(" ")}\n"
       Log.info { message }
-      puts @socket.send(message)
+      socket.puts(message)
     end
 
     def close
-      @socket.close
+      socket.close
       raise ClosedClient.new("closed")
     end
 
     def pong
       @last_answered = Time.utc
-      Log.info { "PONG #{@nickname}" }
+      Log.debug { "PONG #{@nickname}" }
     end
 
-    private def welcome_message
-
-    end
-
-    private def pinger
-      @task_ping = Tasker.every(20.seconds) do
-        Log.info { "pinged #{@nickname}" }
-        raise PingStoppedException.new("Stoped") if socket.closed?
-        @last_checked = Time.utc
-        @socket.send("PING #{@nickname}")
-      end
-      @task_pong_check = Tasker.every(1.minute) do
-        if @last_answered && @last_answered.not_nil! < 2.minutes.ago
-          Log.info { "PONG timedout for #{@nickname} - closing socket" }
-          @socket.close
-          @task_ping.not_nil!.cancel
-          @task_pong_check.not_nil!.cancel
-          raise ClosedClient.new("closed")
-        end
-      end
+    def ping
+      @last_answered = Time.utc
+      Log.debug { "PING #{@nickname}" }
+      send_message("PONG #{@nickname}")
     end
   end
 end
