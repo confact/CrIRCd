@@ -3,8 +3,6 @@ require "tasker"
 module Circed
   class Client
     include Pinger
-    class ClosedClient < Exception; end
-    class PingStoppedException < Exception; end
 
     getter socket : TCPSocket
     getter nickname : String?
@@ -50,6 +48,7 @@ module Circed
       if socket.closed?
         Server.remove_connection(nickname.to_s) unless nickname.to_s.empty?
       end
+      
     end
 
     def set_nickname(new_nickname)
@@ -112,7 +111,7 @@ module Circed
     end
 
     def notice(message)
-      send_message(":#{}")
+      send_message(":#{message}")
     end
 
     def send_message(prefix, command, *params)

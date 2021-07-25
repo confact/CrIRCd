@@ -6,6 +6,7 @@ module Circed
 
     def self.parse_message(message : String) : Payload?
       return nil if message.empty?
+      
       messages = message.split(" ", 2)
       action_type = messages.first
       message = messages[1]

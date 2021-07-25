@@ -65,7 +65,7 @@ module Circed
       !@@connections[nickname]?.nil?
     end
 
-    nickname_used?, to: client_exists?
+    alias_method :nickname_used?, :client_exists?
 
     def self.remove_connection(nickname : String)
       @@connections.delete(nickname)
