@@ -1,11 +1,12 @@
 # Circed - IRCD (deamon) in Crystal
 
-This an crystal IRC server made to follow the spec over time. Right now it is not 100% supporting the spec and is not recommended for production.
+This is an crystal IRC server made to follow the spec over time. Right now it is not 100% supporting the spec and is not recommended for production.
 
 ## What you can do now:
 * let user connect
 * Send MOTD and stats to the user
 * PING/PONG with disconnection after 10 unanswered PINGS.
+* send Peer to peer message between users.
 
 ## Plan to have:
 * Channels
@@ -19,6 +20,14 @@ This an crystal IRC server made to follow the spec over time. Right now it is no
 * ChanServ
 * Server-to-server communication
 * Simple config in YML
+
+
+## How to run
+Would need crystal >= 1.0 to build this server.
+
+1. clone this repo
+2. build the program with: `crystal build --release ./src/circed.cr`
+3. run the program with `./circed` 
 
 
 ## Contributions
