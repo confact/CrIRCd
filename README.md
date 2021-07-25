@@ -29,6 +29,8 @@ Would need crystal >= 1.0 to build this server.
 2. build the program with: `crystal build --release ./src/circed.cr`
 3. run the program with `./circed` 
 
+## Known issues
+* Ping/pong is acting weird, and is not stopping sometimes pinging even if the client have closed the socket.
 
 ## Contributions
 Everyone is welcome to contribute. Fork this repo, make your changes and make a Pull Request explaining what you did and why. And I and others will review it and merge it if it make sense. :)
