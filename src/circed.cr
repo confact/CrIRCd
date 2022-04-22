@@ -1,9 +1,12 @@
-require "./mixins/*"
-require "./*"
+require "fast_irc"
+require "./circed/mixins/**"
+require "./circed/**"
 
 # TODO: Write documentation for `Circed`
 module Circed
-  VERSION = "0.1.0"
+  VERSION = "0.1.1"
 end
+
+Log.setup_from_env
 
 Circed::Server.start

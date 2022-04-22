@@ -5,11 +5,12 @@ This is an crystal IRC server made to follow the spec over time. Right now it is
 ## What you can do now:
 * let user connect
 * Send MOTD and stats to the user
-* PING/PONG with disconnection after 10 unanswered PINGS.
+* PING/PONG with disconnection after 3 unanswered PINGS.
 * send Peer to peer message between users.
+* channels
+* send messages in channels
 
 ## Plan to have:
-* Channels
 * chan modes
 * User modes
 * GLines support
@@ -23,14 +24,19 @@ This is an crystal IRC server made to follow the spec over time. Right now it is
 
 
 ## How to run
-Would need crystal >= 1.0 to build this server.
+Would need crystal >= 1.4 to build this server.
 
 1. clone this repo
 2. build the program with: `crystal build --release ./src/circed.cr`
 3. run the program with `./circed` 
 
 ## Known issues
-* Ping/pong is acting weird, and is not stopping sometimes pinging even if the client have closed the socket.
+* modes is not there for users, channels
+* can't be op of channels.
+* NAMES list of users in channel is not working correctly
+* Some things like NICK change won't update users in channels of the change yet
+* socket errors
+* timeout errors
 
 ## Contributions
 Everyone is welcome to contribute. Fork this repo, make your changes and make a Pull Request explaining what you did and why. And I and others will review it and merge it if it make sense. :)
