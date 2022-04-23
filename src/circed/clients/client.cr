@@ -231,10 +231,17 @@ module Circed
     end
 
     def invite(message)
-      channel = message.first
+      invited_user = message.first
+      channel = message[1]
       if channel.starts_with?("#")
         if ChannelHandler.channel_exists?(channel)
-          #ChannelHandler.get_channel(channel).invite(self, message[1..-1].join)
+          client = UserHandler.get_client(invited_user)
+          if client
+            client.not_nil!.send_message_to_server("INVITE", nickname.not_nil!, user.not_nil!.name, host.not_nil!, message)
+            send_message_to_server("INVITE", nickname.not_nil!, user.not_nil!.name, host.not_nil!, message)
+          else
+            send_message(Server.clean_name, Numerics::ERR_NOSUCHNICK, invited_user, ":No such nick")
+          end
         else
           send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, channel, ":No such channel")
         end
