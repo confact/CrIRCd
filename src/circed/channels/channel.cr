@@ -54,6 +54,32 @@ module Circed
       end
     end
 
+    def kick(user : Client, kick_nickname : String, reason : String)
+      unless user_in_channel?(user)
+        user.send_message(Server.clean_name, Numerics::ERR_NOTONCHANNEL, irc_name, ":You're not on that channel")
+        return
+      end
+
+      channel_user = find_user(user)
+
+      if !channel_user.try(&.is_operator?)
+        user.send_message(Server.clean_name, Numerics::ERR_CHANOPRIVSNEEDED, irc_name, ":You must be a channel operator")
+        return
+      end
+
+      kicked_user = find_user_by_nickname(kick_nickname)
+
+      if !kicked_user
+        user.send_message(Server.clean_name, Numerics::ERR_NOSUCHNICK, irc_name, ":No such nick/channel")
+        return
+      end
+
+      @users.each do |u|
+        u.send_message_to_server("KICK", user.nickname.to_s, user.user.try(&.name), user.host, [name, kick_nickname, reason])
+      end
+      @users.delete(kicked_user)
+    end
+
     def send_message(user : Client, message : String)
       if user_in_channel?(user)
         @users.each do |u|
@@ -133,6 +159,10 @@ module Circed
 
     def find_user(user)
       @users.find { |u| u.client == user }
+    end
+
+    def find_user_by_nickname(nickname : String)
+      @users.find { |u| u.nickname == nickname }
     end
 
     def channel_full?

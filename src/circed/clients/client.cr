@@ -217,10 +217,11 @@ module Circed
     end
 
     def kick(message)
+      Log.debug { "kick: #{message}" }
       channel = message.first
       if channel.starts_with?("#")
         if ChannelHandler.channel_exists?(channel)
-          #ChannelHandler.get_channel(channel).kick(self, message[1..-1].join)
+          ChannelHandler.get_channel(channel).try(&.kick(self, message[1], message[2..-1].join))
         else
           send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, channel, ":No such channel")
         end
