@@ -7,11 +7,11 @@ module Circed
     getter name : String
     getter realname : String
 
-    def initialize(@client : Client, @mode, @name, @realname)
+    def initialize(@client : Client?, @mode, @name, @realname)
     end
 
     def to_s
-      "#{user} #{mode} :#{realname}"
+      "#{name} #{mode} :#{realname}"
     end
   end
 end

@@ -1,6 +1,7 @@
 require "socket"
 
 module Circed
+  class ClosedClient < Exception; end
   class Server
     @@name = "irc.erro.sh"
     class_getter created = Time.utc
@@ -44,6 +45,7 @@ module Circed
       client.send_message(clean_name, Numerics::RPL_CREATED, nick, ":This server was created #{Server.created}")
       client.send_message(clean_name, Numerics::RPL_MYINFO, nick, @@name, "Circed", "o o o")
       client.send_message(clean_name, Numerics::RPL_ISUPPORT, nick, ":CASEMAPPING=ascii", "are supported by this server")
+      client.send_message(clean_name, Numerics::RPL_ISUPPORT, nick, ":PREFIX=(ohv)@%+", "are supported by this server")
       data = ""
       data += lusers(client)
       data += motd(client)
@@ -56,7 +58,7 @@ module Circed
       data += Format.format_server_message(name, Numerics::RPL_LUSERCLIENT, nick, ":There are #{UserHandler.size} users and 0 invisible on 1 server(s)")
       data += Format.format_server_message(name, Numerics::RPL_LUSEROP, nick, ":1 IRC Operators online")
       data += Format.format_server_message(name, Numerics::RPL_LUSERUNKNOWN, nick, ":0 unregistered connections")
-      data += Format.format_server_message(name, Numerics::RPL_LUSERCHANNELS, nick, ":0 channels formed")
+      data += Format.format_server_message(name, Numerics::RPL_LUSERCHANNELS, nick, ":#{ChannelHandler.size} channels formed")
       data += Format.format_server_message(name, Numerics::RPL_LUSERME, nick, ":I have #{UserHandler.size} clients and 1 servers")
       data += Format.format_server_message(name, Numerics::RPL_LOCALUSERS, nick, UserHandler.size, 10000, ":Current local users #{UserHandler.size}, max 10000")
       data += Format.format_server_message(name, Numerics::RPL_GLOBALUSERS, nick, UserHandler.size, 10000, ":Current global users #{UserHandler.size}, max 10000")

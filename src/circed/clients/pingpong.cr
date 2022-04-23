@@ -7,28 +7,26 @@ module Circed
     @last_ping : Time?
     @last_pong : Time?
 
-    @client : Client
+    getter client : Client
 
     @task_ping : Tasker::Repeat(Int32) | Tasker::Repeat(Nil)
     @task_pong_check : Tasker::Repeat(Int32) | Tasker::Repeat(Nil)
 
     def initialize(@client : Client)
       @task_ping = Tasker.every(20.seconds) do
-        stop_ping if socket.closed?
+        stop_ping if client.closed?
         Log.info { "pinged #{nickname}" }
-        raise PingStoppedException.new("Stoped") if socket.closed?
+        raise PingStoppedException.new("Stoped") if client.closed?
         @last_ping = Time.utc
         send_message(create_ping_message)
       end
       @task_pong_check = Tasker.every(30.seconds) do
-        stop_pong_check if socket.closed?
+        stop_pong_check if client.closed?
         if @last_pong && @last_pong.not_nil! < 1.minutes.ago
           Log.debug { "PONG timedout for #{nickname} - closing socket" }
-          socket.close
           stop_ping
           stop_pong_check
-          UserHandler.remove_connection(nickname.to_s) unless nickname.to_s.empty?
-          raise ClosedClient.new("closed")
+          client.close
         end
       end
     end
@@ -66,12 +64,8 @@ module Circed
       @client.send_message(message)
     end
 
-    def socket
-      @client.socket
-    end
-
     def host
-      socket.remote_address
+      client.try(&.host) || ""
     end
 
     private def create_ping_message

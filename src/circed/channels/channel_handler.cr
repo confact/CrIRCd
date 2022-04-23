@@ -21,8 +21,23 @@ module Circed
       end
     end
 
+    def self.remove_user_from_all_channels(client : Client)
+      @@channels.each do |channel, channel_obj|
+        channel_obj.remove_client(client)
+        if channel_obj.channel_empty?
+          @@channels.delete(channel)
+        end
+      end
+    end
+
+    def self.send_to_all_channels(client : Client, *args)
+      @@channels.each do |channel, channel_obj|
+        channel_obj.send_raw(client, *args)
+      end
+    end
+
     def self.get_channel(channel : String)
-      return @@channels[channel]?
+      @@channels[channel]?
     end
 
     def self.channel_is_full?(channel : String)
@@ -30,6 +45,16 @@ module Circed
         return @@channels[channel].channel_full?
       end
       false
+    end
+
+    def self.user_channels(client : Client)
+      chs = [] of Channel
+      @@channels.each do |channel, channel_obj|
+        if channel_obj.user_in_channel?(client)
+          chs << channel
+        end
+      end
+      chs
     end
 
     def self.channel_empty?(channel : String)
@@ -45,6 +70,20 @@ module Circed
         true
       else
         false
+      end
+    end
+
+    def self.size
+      @@channels.size
+    end
+
+    def self.channel_list
+      @@channels.keys
+    end
+
+    def self.change_mode(channel : String, mode : String, client : Client)
+      if @@channels[channel]?
+        @@channels[channel].change_mode(mode, client)
       end
     end
 

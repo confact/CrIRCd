@@ -3,7 +3,7 @@ require "tasker"
 module Circed
   class Client
 
-    getter socket : TCPSocket
+    getter socket : TCPSocket?
     getter host : String?
     getter nickname : String?
 
@@ -11,8 +11,8 @@ module Circed
 
     @pingpong : Pingpong?
 
-    def initialize(@socket : Socket)
-      @host = @socket.remote_address.to_s
+    def initialize(@socket : Socket?)
+      @host = @socket.try(&.remote_address.to_s)
     end
 
     def setup
@@ -20,7 +20,7 @@ module Circed
     end
 
     def message_handling
-      while data_line = socket.gets
+      while data_line = socket.try(&.gets)
         message = IO::Memory.new(data_line)
         FastIRC.parse(message) do |payload|
           case payload.command
@@ -37,16 +37,36 @@ module Circed
             join_channel(payload.params.first)
           when "PART"
             part_channel(payload.params.first)
+          when "MODE"
+            mode(payload.params)
+          when "QUIT"
+            quit(payload.params)
+          when "KICK"
+            kick(payload.params)
+          when "TOPIC"
+            topic(payload.params)
+          when "INVITE"
+            invite(payload.params)
+          when "NOTICE"
+            notice(payload.params)
           when "PRIVMSG"
             private_message(payload.params.first, payload.params[1..-1].join)
           end
         end
 
-        if socket.closed?
+        if closed?
           UserHandler.remove_connection(nickname.to_s) unless nickname.to_s.empty?
           break
         end
       end
+    rescue e : IO::Error
+      shutdown
+      UserHandler.remove_connection(nickname.to_s) unless nickname.to_s.empty?
+    rescue e : Circed::ClosedClient
+      UserHandler.remove_connection(nickname.to_s) unless nickname.to_s.empty?
+    rescue e : Exception
+      shutdown
+      UserHandler.remove_connection(nickname.to_s) unless nickname.to_s.empty?
     end
 
     def set_nickname(new_nickname)
@@ -63,6 +83,7 @@ module Circed
           UserHandler.changed_nickname(old_nickname.to_s, new_nickname)
           send_message_to_server("NICK", old_nickname.to_s, user.not_nil!.name, host.not_nil!, new_nickname.split)
           @nickname = new_nickname
+          ChannelHandler.send_to_all_channels(self, "NICK", old_nickname.to_s, user.not_nil!.name, host.not_nil!, new_nickname.split)
         rescue e : Exception
           Log.debug { "error, nickname is not used: #{nickname} " }
           @nickname = old_nickname
@@ -80,13 +101,12 @@ module Circed
       username = users_messages.first
       realname = users_messages[3].sub(":", "")
       @user = User.new(self, mode, username, realname)
-      Log.debug { "Set user to: #{user} with real name #{realname}" }
+      Log.debug { "Set user to: #{user.to_s}" }
       Circed::Server.welcome_message(self)
       @pingpong = Pingpong.new(self)
     end
 
     def private_message(receiver : String, message : String)
-
       if receiver.starts_with?("#")
         channel = ChannelHandler.get_channel(receiver)
         if channel
@@ -146,23 +166,90 @@ module Circed
       end
     end
 
-    def quit
+    def quit(_message)
+      shutdown
       close
     end
 
     def send_message(message)
       Log.info { message }
-      socket.puts(message + "\n")
+      if closed?
+        Log.debug { "Socket is closed, can't send message" }
+        return
+      end
+      socket.try(&.puts(message + "\n"))
     end
 
     def notice(message)
       send_message(":#{message}")
     end
 
+    def mode(message)
+      user_or_channel = message.first
+      if user_or_channel.starts_with?("#")
+        channel = ChannelHandler.get_channel(user_or_channel)
+        if channel
+          channel.change_channel_mode(self, message[1..-1].join)
+        else
+          send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, user_or_channel, ":No such channel")
+        end
+      else
+        client = UserHandler.get_client(user_or_channel)
+        if client
+          #client.not_nil!.mode(self, message[1..-1].join)
+        else
+          send_message(Server.clean_name, Numerics::ERR_NOSUCHNICK, user_or_channel, ":No such nick")
+        end
+      end
+    end
+
+    def topic(message)
+      channel = message.first
+      if channel.starts_with?("#")
+        if ChannelHandler.channel_exists?(channel)
+          ChannelHandler.get_channel(channel).try(&.set_topic(self, message[1..-1].join))
+        else
+          send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, channel, ":No such channel")
+        end
+      else
+        send_message(Server.clean_name, Numerics::ERR_BADCHANMASK, channel, ":Wrong channel format")
+      end
+    end
+
+    def kick(message)
+      channel = message.first
+      if channel.starts_with?("#")
+        if ChannelHandler.channel_exists?(channel)
+          #ChannelHandler.get_channel(channel).kick(self, message[1..-1].join)
+        else
+          send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, channel, ":No such channel")
+        end
+      else
+        send_message(Server.clean_name, Numerics::ERR_BADCHANMASK, channel, ":Wrong channel format")
+      end
+    end
+
+    def invite(message)
+      channel = message.first
+      if channel.starts_with?("#")
+        if ChannelHandler.channel_exists?(channel)
+          #ChannelHandler.get_channel(channel).invite(self, message[1..-1].join)
+        else
+          send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, channel, ":No such channel")
+        end
+      else
+        send_message(Server.clean_name, Numerics::ERR_BADCHANMASK, channel, ":Wrong channel format")
+      end
+    end
+
     def send_message(prefix, command, *params)
+      if closed?
+        Log.debug { "Socket is closed, can't send message" }
+        return
+      end
       message = "#{prefix} #{command} #{params.join(" ")}\n"
       Log.info { message }
-      socket.puts(message)
+      socket.try(&.puts(message))
     end
 
     def send_message_to_receiver(command, sender_nickname, sender_user, sender_host, params : Array(String))
@@ -172,7 +259,11 @@ module Circed
       end
       Log.debug { "sending message to #{sender_nickname}: #{message}" }
       Log.info { message }
-      socket.puts(message)
+      if closed?
+        Log.debug { "Socket is closed, can't send message" }
+        return
+      end
+      socket.try(&.puts(message))
     end
 
     def send_message_to_server(command, sender_nickname, sender_user, sender_host, params : Array(String))
@@ -182,12 +273,17 @@ module Circed
       end
       Log.debug { "sending message to #{sender_nickname}: #{message}" }
       Log.info { message }
-      socket.puts(message)
+      socket.try(&.puts(message))
     end
 
     def close
-      socket.close
+      Log.info { "Closing connection" }
+      socket.try(&.close)
       raise ClosedClient.new("closed")
+    end
+
+    def closed? : Bool
+      socket.try(&.closed?) || false
     end
 
     def pong(params : Array(String))
@@ -199,7 +295,15 @@ module Circed
     def ping(params : Array(String))
       @pingpong.try(&.ping(params))
       #return if @last_checked && @last_checked.not_nil! < 5.seconds.ago
+    end
 
+    def shutdown
+      ChannelHandler.remove_user_from_all_channels(self)
+      if @pingpong
+        @pingpong.try(&.stop_ping)
+        @pingpong.try(&.stop_pong_check)
+      end
+      socket.try(&.close)
     end
   end
 end

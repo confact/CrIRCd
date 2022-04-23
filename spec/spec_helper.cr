@@ -1,2 +1,4 @@
 require "spec"
-require "../src/circed"
+require "fast_irc"
+require "../src/circed/mixins/**"
+require "../src/circed/**"
