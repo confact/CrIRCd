@@ -22,7 +22,7 @@ module Circed
     end
 
     def self.remove_user_from_all_channels(client : Client)
-      @@channels.each do |channel, channel_obj|
+      @@channels.each do |_channel, channel_obj|
         channel_obj.remove_client(client)
         if channel_obj.channel_empty?
           @@channels.delete(channel)
@@ -31,7 +31,7 @@ module Circed
     end
 
     def self.send_to_all_channels(client : Client, *args)
-      @@channels.each do |channel, channel_obj|
+      @@channels.each do |_channel, channel_obj|
         channel_obj.send_raw(client, *args)
       end
     end
@@ -49,7 +49,7 @@ module Circed
 
     def self.user_channels(client : Client)
       chs = [] of Channel
-      @@channels.each do |channel, channel_obj|
+      @@channels.each do |_channel, channel_obj|
         if channel_obj.user_in_channel?(client)
           chs << channel
         end

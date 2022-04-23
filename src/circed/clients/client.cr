@@ -101,7 +101,7 @@ module Circed
       username = users_messages.first
       realname = users_messages[3].sub(":", "")
       @user = User.new(self, mode, username, realname)
-      Log.debug { "Set user to: #{user.to_s}" }
+      Log.debug { "Set user to: #{user}" }
       Circed::Server.welcome_message(self)
       @pingpong = Pingpong.new(self)
     end

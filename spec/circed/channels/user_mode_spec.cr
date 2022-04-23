@@ -48,7 +48,7 @@ describe Circed::UserMode do
   it "check if a mode is voice" do
     mode = Circed::UserMode.new
     mode.add("v")
-    mode.is_voiced?.should be_true 
+    mode.is_voiced?.should be_true
   end
 
   it "check if a mode is not voice" do
