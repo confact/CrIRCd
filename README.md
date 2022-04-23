@@ -9,6 +9,8 @@ This is an crystal IRC server made to follow the spec over time. Right now it is
 * send Peer to peer message between users.
 * channels
 * send messages in channels
+* Kick user from channel
+* invite user to channel
 
 ## Plan to have:
 * chan modes
