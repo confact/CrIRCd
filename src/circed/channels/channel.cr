@@ -2,9 +2,9 @@ module Circed
   class Channel
     getter name : String
 
-    getter topic : String = ""
-    getter topic_setter : ChannelUser? = nil
-    getter topic_set_at : Time? = nil
+    property topic : String = ""
+    property topic_setter : ChannelUser? = nil
+    property topic_set_at : Time? = nil
 
     getter mode : String = ""
 
@@ -17,7 +17,6 @@ module Circed
         @name = "#" + name
       end
     end
-
 
     def add_client(user : Client)
       if user_in_channel?(user)
@@ -52,32 +51,6 @@ module Circed
       @users.each do |u|
         u.send_message_to_server("PART", user.nickname.to_s, user.user.try(&.name), user.host, [name])
       end
-    end
-
-    def kick(user : Client, kick_nickname : String, reason : String)
-      unless user_in_channel?(user)
-        user.send_message(Server.clean_name, Numerics::ERR_NOTONCHANNEL, irc_name, ":You're not on that channel")
-        return
-      end
-
-      channel_user = find_user(user)
-
-      if !channel_user.try(&.is_operator?)
-        user.send_message(Server.clean_name, Numerics::ERR_CHANOPRIVSNEEDED, irc_name, ":You must be a channel operator")
-        return
-      end
-
-      kicked_user = find_user_by_nickname(kick_nickname)
-
-      if !kicked_user
-        user.send_message(Server.clean_name, Numerics::ERR_NOSUCHNICK, irc_name, ":No such nick/channel")
-        return
-      end
-
-      @users.each do |u|
-        u.send_message_to_server("KICK", user.nickname.to_s, user.user.try(&.name), user.host, [name, kick_nickname, reason])
-      end
-      @users.delete(kicked_user)
     end
 
     def send_message(user : Client, message : String)
@@ -135,24 +108,6 @@ module Circed
       end
     end
 
-    def set_topic(user : Client, topic : String)
-      unless user_in_channel?(user)
-        user.send_message(Server.clean_name, Numerics::ERR_NOTONCHANNEL, irc_name, ":You're not on that channel")
-        return
-      end
-      channel_user = find_user(user)
-      if channel_user.try(&.is_operator?)
-        @topic = topic
-        @topic_setter = channel_user
-        @topic_set_at = Time.utc
-        @users.each do |u|
-          u.send_message_to_server("TOPIC", user.nickname.to_s, user.user.try(&.name), user.host, [name, topic])
-        end
-      else
-        user.send_message(Server.clean_name, Numerics::ERR_CHANOPRIVSNEEDED, irc_name, ":You must be a channel operator")
-      end
-    end
-
     def user_in_channel?(user)
       @users.any? { |u| u.client == user }
     end
@@ -163,6 +118,18 @@ module Circed
 
     def find_user_by_nickname(nickname : String)
       @users.find { |u| u.nickname == nickname }
+    end
+
+    def delete(user : Client)
+      @users.delete(find_user(user))
+    end
+
+    def delete(nickname : String)
+      @users.delete(find_user_by_nickname(nickname))
+    end
+
+    def delete(user : ChannelUser)
+      @users.delete(user)
     end
 
     def channel_full?

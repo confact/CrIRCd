@@ -50,7 +50,7 @@ module Circed
           when "NOTICE"
             notice(payload.params)
           when "PRIVMSG"
-            private_message(payload.params.first, payload.params[1..-1].join)
+            private_message(payload.params.first, payload.params)
           end
         end
 
@@ -70,30 +70,7 @@ module Circed
     end
 
     def set_nickname(new_nickname)
-      if UserHandler.nickname_used?(new_nickname)
-        send_message(Server.clean_name, Numerics::ERR_NICKNAMEINUSE, new_nickname, ":Nickname is already in used")
-        return
-      end
-      changed = !nickname.to_s.empty?
-      old_nickname = nickname
-
-      if changed
-        begin
-          Log.debug { "changing nickname to: #{new_nickname} " }
-          UserHandler.changed_nickname(old_nickname.to_s, new_nickname)
-          send_message_to_server("NICK", old_nickname.to_s, user.not_nil!.name, host.not_nil!, new_nickname.split)
-          @nickname = new_nickname
-          ChannelHandler.send_to_all_channels(self, "NICK", old_nickname.to_s, user.not_nil!.name, host.not_nil!, new_nickname.split)
-        rescue e : Exception
-          Log.debug { "error, nickname is not used: #{nickname} " }
-          @nickname = old_nickname
-          send_message(Server.clean_name, Numerics::ERR_ERRONEUSNICKNAME, old_nickname, ":Nickname is not used.")
-        end
-      else
-        Log.debug { "Set nickname to: #{new_nickname} " }
-        @nickname = new_nickname
-        send_message(Server.clean_name, "NICK", new_nickname)
-      end
+      Actions::Nick.call(self, new_nickname)
     end
 
     def set_user(users_messages : Array(String))
@@ -106,64 +83,16 @@ module Circed
       @pingpong = Pingpong.new(self)
     end
 
-    def private_message(receiver : String, message : String)
-      if receiver.starts_with?("#")
-        channel = ChannelHandler.get_channel(receiver)
-        if channel
-          channel.send_message(self, message)
-        else
-          send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, receiver, ":No such channel")
-        end
-      else
-        client = UserHandler.get_client(receiver)
-        if client
-          client.not_nil!.send_message_to_receiver("PRIVMSG", nickname.not_nil!, user.not_nil!.name, host.not_nil!, message.split)
-        else
-          send_message(Server.clean_name, Numerics::ERR_NOSUCHNICK, receiver, ":No such nick")
-        end
-      end
+    def private_message(receiver : String, message : Array(String))
+      Actions::Privmsg.call(self, receiver, message)
     end
 
     def join_channel(channel : String)
-      channels = channel.split(",")
-      channels.each do |ch|
-        ch = ch.strip
-        if ch.empty?
-          send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, ch, ":No such channel")
-          next
-        end
-        if ChannelHandler.channel_is_full?(ch)
-          send_message(Server.clean_name, Numerics::ERR_CHANNELISFULL, ch, ":Channel is full")
-          next
-        end
-        if ChannelHandler.user_in_channel?(ch, self)
-          send_message(Server.clean_name, Numerics::ERR_USERONCHANNEL, ch, ":User is already in channel")
-          next
-        end
-        ChannelHandler.add_user_to_channel(ch, self)
-        #send_message(Server.clean_name, "JOIN", channel)
-      end
+      Actions::Join.call(self, channel)
     end
 
     def part_channel(channel : String)
-      channels = channel.split(",")
-      channels.each do |ch|
-        ch = ch.strip
-        if ch.empty?
-          send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, ch, ":No such channel")
-          next
-        end
-        if !ChannelHandler.channel_exists?(ch)
-          send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, ch, ":No such channel")
-          next
-        end
-        if !ChannelHandler.user_in_channel?(ch, self)
-          send_message(Server.clean_name, Numerics::ERR_NOTONCHANNEL, ch, ":User is not in channel")
-          next
-        end
-        ChannelHandler.remove_user_from_channel(ch, self)
-        #send_message(Server.clean_name, "PART", channel)
-      end
+      Actions::Part.call(self, channel)
     end
 
     def quit(_message)
@@ -185,69 +114,24 @@ module Circed
     end
 
     def mode(message)
-      user_or_channel = message.first
-      if user_or_channel.starts_with?("#")
-        channel = ChannelHandler.get_channel(user_or_channel)
-        if channel
-          channel.change_channel_mode(self, message[1..-1].join)
-        else
-          send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, user_or_channel, ":No such channel")
-        end
-      else
-        client = UserHandler.get_client(user_or_channel)
-        if client
-          #client.not_nil!.mode(self, message[1..-1].join)
-        else
-          send_message(Server.clean_name, Numerics::ERR_NOSUCHNICK, user_or_channel, ":No such nick")
-        end
-      end
+      Actions::Mode.call(self, message)
+    end
+
+    def nickname=(new_nickname)
+      @nickname = new_nickname
     end
 
     def topic(message)
-      channel = message.first
-      if channel.starts_with?("#")
-        if ChannelHandler.channel_exists?(channel)
-          ChannelHandler.get_channel(channel).try(&.set_topic(self, message[1..-1].join))
-        else
-          send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, channel, ":No such channel")
-        end
-      else
-        send_message(Server.clean_name, Numerics::ERR_BADCHANMASK, channel, ":Wrong channel format")
-      end
+      Actions::Topic.call(self, message)
     end
 
     def kick(message)
-      Log.debug { "kick: #{message}" }
-      channel = message.first
-      if channel.starts_with?("#")
-        if ChannelHandler.channel_exists?(channel)
-          ChannelHandler.get_channel(channel).try(&.kick(self, message[1], message[2..-1].join))
-        else
-          send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, channel, ":No such channel")
-        end
-      else
-        send_message(Server.clean_name, Numerics::ERR_BADCHANMASK, channel, ":Wrong channel format")
-      end
+      Actions::Kick.call(self, message)
     end
 
     def invite(message)
       invited_user = message.first
-      channel = message[1]
-      if channel.starts_with?("#")
-        if ChannelHandler.channel_exists?(channel)
-          client = UserHandler.get_client(invited_user)
-          if client
-            client.not_nil!.send_message_to_server("INVITE", nickname.not_nil!, user.not_nil!.name, host.not_nil!, message)
-            send_message_to_server("INVITE", nickname.not_nil!, user.not_nil!.name, host.not_nil!, message)
-          else
-            send_message(Server.clean_name, Numerics::ERR_NOSUCHNICK, invited_user, ":No such nick")
-          end
-        else
-          send_message(Server.clean_name, Numerics::ERR_NOSUCHCHANNEL, channel, ":No such channel")
-        end
-      else
-        send_message(Server.clean_name, Numerics::ERR_BADCHANMASK, channel, ":Wrong channel format")
-      end
+      Actions::Invite.call(self, invited_user, message)
     end
 
     def send_message(prefix, command, *params)
@@ -261,27 +145,23 @@ module Circed
     end
 
     def send_message_to_receiver(command, sender_nickname, sender_user, sender_host, params : Array(String))
+      return unless socket
+
       prefix = FastIRC::Prefix.new(source: sender_nickname, user: sender_user, host: sender_host)
-      message = String.build do |io|
-        FastIRC::Message.new(command, [user.not_nil!.name] + params, prefix: prefix).to_s(io)
-      end
-      Log.debug { "sending message to #{sender_nickname}: #{message}" }
-      Log.info { message }
+      FastIRC::Message.new(command, [user.not_nil!.name] + params, prefix: prefix).to_s(socket.not_nil!)
+      Log.debug { "sending message to #{sender_nickname}" }
       if closed?
         Log.debug { "Socket is closed, can't send message" }
         return
       end
-      socket.try(&.puts(message))
     end
 
     def send_message_to_server(command, sender_nickname, sender_user, sender_host, params : Array(String))
+      return unless socket
+
       prefix = FastIRC::Prefix.new(source: sender_nickname, user: sender_user, host: sender_host)
-      message = String.build do |io|
-        FastIRC::Message.new(command, params, prefix: prefix).to_s(io)
-      end
-      Log.debug { "sending message to #{sender_nickname}: #{message}" }
-      Log.info { message }
-      socket.try(&.puts(message))
+      FastIRC::Message.new(command, params, prefix: prefix).to_s(socket.not_nil!)
+      Log.debug { "sending message to #{sender_nickname}" }
     end
 
     def close

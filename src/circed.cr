@@ -1,5 +1,6 @@
 require "fast_irc"
 require "./circed/mixins/**"
+require "./circed/actions/mixins/**"
 require "./circed/**"
 
 # TODO: Write documentation for `Circed`

@@ -25,7 +25,7 @@ module Circed
       @@channels.each do |_channel, channel_obj|
         channel_obj.remove_client(client)
         if channel_obj.channel_empty?
-          @@channels.delete(channel)
+          @@channels.delete(channel_obj)
         end
       end
     end
@@ -48,13 +48,7 @@ module Circed
     end
 
     def self.user_channels(client : Client)
-      chs = [] of Channel
-      @@channels.each do |_channel, channel_obj|
-        if channel_obj.user_in_channel?(client)
-          chs << channel
-        end
-      end
-      chs
+      @@channels.select { |_channel, channel_obj| channel_obj.user_in_channel?(client) }.values
     end
 
     def self.channel_empty?(channel : String)
