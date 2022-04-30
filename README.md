@@ -1,4 +1,4 @@
-# Circed - IRCD (deamon) in Crystal
+# CrIRCd - IRCD (deamon) in Crystal
 
 This is an crystal IRC server made to follow the spec over time. Right now it is not 100% supporting the spec and is not recommended for production.
 
