@@ -4,7 +4,7 @@ module Circed
     @@command = "INVITE"
 
     extend Circed::ActionHelper
-  
+
     def self.call(sender, receiver, message)
       invited_user = receiver
       channel = message[1]

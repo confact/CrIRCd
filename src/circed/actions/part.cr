@@ -4,7 +4,7 @@ module Circed
     @@command = "PART"
 
     extend Circed::ActionHelper
-  
+
     def self.call(sender, channel : String)
       channels = channel.split(",")
       channels.each do |ch|

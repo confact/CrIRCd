@@ -4,7 +4,7 @@ module Circed
     @@command = "MODE"
 
     extend Circed::ActionHelper
-  
+
     def self.call(sender, message)
       user_or_channel = message.first
       if user_or_channel.starts_with?("#")

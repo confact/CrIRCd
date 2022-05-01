@@ -59,20 +59,20 @@ describe Circed::Channel do
   end
 
   it "should be able to change topic if part of channel" do
-    channel = Circed::Channel.new("test")
-    channel.topic.should eq("")
     client = Circed::Client.new(nil)
-    channel.add_client(client)
-    channel.set_topic(client, "test")
-    channel.topic.should eq("test")
-    channel.topic_setter.should be_a(Circed::ChannelUser)
+    Circed::ChannelHandler.add_user_to_channel("#test", client)
+    channel = Circed::ChannelHandler.get_channel("#test")
+    channel.try(&.topic).should eq("")
+    Circed::Actions::Topic.call(client, ["#test", "test"])
+    channel.try(&.topic).should eq("test")
+    #channel.topic_setter.should be_a(Circed::ChannelUser)
   end
 
   it "should not be able to change topic if not part of channel" do
     channel = Circed::Channel.new("test")
     channel.topic.should eq("")
     client = Circed::Client.new(nil)
-    channel.set_topic(client, "test")
+    Circed::Actions::Topic.call(client, [channel.name, "test"])
     channel.topic.should eq("")
   end
 
@@ -83,7 +83,7 @@ describe Circed::Channel do
     channel.add_client(client)
     client2 = Circed::Client.new(nil)
     channel.add_client(client2)
-    channel.set_topic(client2, "test")
+    Circed::Actions::Topic.call(client2, [channel.name, "test"])
     channel.topic.should eq("")
   end
 end

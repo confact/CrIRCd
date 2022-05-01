@@ -4,7 +4,7 @@ module Circed
     @@command = "PRIVMSG"
 
     extend Circed::ActionHelper
-  
+
     def self.call(sender, receiver, message : Array(String))
       if receiver.starts_with?("#")
         channel = ChannelHandler.get_channel(receiver)

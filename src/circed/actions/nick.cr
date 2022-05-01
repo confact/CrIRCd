@@ -4,7 +4,7 @@ module Circed
     @@command = "NICK"
 
     extend Circed::ActionHelper
-  
+
     def self.call(sender, new_nickname : String)
       if UserHandler.nickname_used?(new_nickname)
         send_error(sender, Numerics::ERR_NICKNAMEINUSE, new_nickname, "Nickname is already in used")

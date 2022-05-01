@@ -4,7 +4,7 @@ module Circed
     @@command = "JOIN"
 
     extend Circed::ActionHelper
-  
+
     def self.call(sender, channel : String)
       channels = channel.split(",")
       channels.each do |ch|

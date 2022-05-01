@@ -4,7 +4,7 @@ module Circed
     @@command = "KICK"
 
     extend Circed::ActionHelper
-  
+
     def self.call(sender, message)
       Log.debug { "kick: #{message}" }
       channel = message.first
