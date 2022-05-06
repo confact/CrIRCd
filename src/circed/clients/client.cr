@@ -20,9 +20,9 @@ module Circed
     end
 
     def message_handling
-      while data_line = socket.try(&.gets)
-        message = IO::Memory.new(data_line)
-        FastIRC.parse(message) do |payload|
+      return unless socket
+      while !socket.not_nil!.closed?
+        FastIRC.parse(socket.not_nil!) do |payload|
           case payload.command
           when "NICK"
             set_nickname(payload.params.first)

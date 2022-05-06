@@ -42,7 +42,7 @@ describe Circed::Channel do
   end
 
   it "should be able to change mode" do
-    channel = Circed::Channel.new("test")
+    channel = Circed::Channel.new("#test")
     channel.mode.should eq("")
     client = Circed::Client.new(nil)
     channel.add_client(client)
@@ -65,11 +65,11 @@ describe Circed::Channel do
     channel.try(&.topic).should eq("")
     Circed::Actions::Topic.call(client, ["#test", "test"])
     channel.try(&.topic).should eq("test")
-    #channel.topic_setter.should be_a(Circed::ChannelUser)
+    channel.try(&.topic_setter).should be_a(Circed::ChannelUser)
   end
 
   it "should not be able to change topic if not part of channel" do
-    channel = Circed::Channel.new("test")
+    channel = Circed::Channel.new("#test")
     channel.topic.should eq("")
     client = Circed::Client.new(nil)
     Circed::Actions::Topic.call(client, [channel.name, "test"])
@@ -77,7 +77,7 @@ describe Circed::Channel do
   end
 
   it "should not be able to change topic if not operator" do
-    channel = Circed::Channel.new("test")
+    channel = Circed::Channel.new("#test")
     channel.topic.should eq("")
     client = Circed::Client.new(nil)
     channel.add_client(client)
