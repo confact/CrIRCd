@@ -2,7 +2,9 @@ module Circed
   class ChannelHandler
     @@channels : Hash(String, Channel) = {} of String => Channel
 
-
+    def self.channels
+      @@channels
+    end
 
     def self.add_user_to_channel(channel : String, client : Client)
       if @@channels[channel]? == nil
@@ -73,6 +75,22 @@ module Circed
 
     def self.channel_list
       @@channels.keys
+    end
+
+    def self.channel_is_private?(channel : String) : Bool
+      if @@channels[channel]? != nil
+        @@channels[channel].private?
+      else
+        false
+      end
+    end
+
+    def self.channel_password(channel : String) : String?
+      if @@channels[channel]? != nil
+        @@channels[channel].channel_password
+      else
+        nil
+      end
     end
 
     def self.change_mode(channel : String, mode : String, client : Client)

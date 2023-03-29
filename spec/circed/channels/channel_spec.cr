@@ -46,7 +46,7 @@ describe Circed::Channel do
     channel.mode.should eq("")
     client = Circed::Client.new(nil)
     channel.add_client(client)
-    channel.change_channel_mode(client, "+o")
+    channel.change_user_mode(client, "+o")
     channel.mode.should eq("o")
   end
 
@@ -54,7 +54,7 @@ describe Circed::Channel do
     channel = Circed::Channel.new("test")
     channel.mode.should eq("")
     client = Circed::Client.new(nil)
-    channel.change_channel_mode(client, "+o")
+    channel.change_user_mode(client, "+o")
     channel.mode.should eq("")
   end
 

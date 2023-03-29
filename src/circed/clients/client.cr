@@ -24,6 +24,8 @@ module Circed
       while !socket.not_nil!.closed?
         FastIRC.parse(socket.not_nil!) do |payload|
           case payload.command
+          when "LIST"
+            Actions::List.call(self)
           when "NICK"
             set_nickname(payload.params.first)
           when "USER"

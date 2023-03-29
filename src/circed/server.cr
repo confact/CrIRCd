@@ -1,16 +1,15 @@
 require "socket"
+require "yaml"
 
 module Circed
   class ClosedClient < Exception; end
   class Server
-    @@name = "irc.erro.sh"
-    class_getter created = Time.utc
-    @@address = "::1"
+    class_getter config = Config.from_yaml(File.read("config.yml"))
 
     # @@servers
 
     def self.start
-      server = TCPServer.new(@@address, 6667)
+      server = TCPServer.new(config.host, config.port)
       # @@address = server.local_address.to_s
       start_message
       loop do
@@ -36,14 +35,18 @@ module Circed
     def bootup_servers
     end
 
+    def self.created
+      @@config.created
+    end
+
     def self.welcome_message(client : Client)
       nick = client.nickname.to_s
       UserHandler.add_client(client)
       Log.info { "Sends welcome to #{nick}" }
       client.send_message(clean_name, Numerics::RPL_WELCOME, nick, ":Welcome to the Internet Relay Network #{nick}")
-      client.send_message(clean_name, Numerics::RPL_YOURHOST, nick, ":Your host is #{@@address}, running version Circed #{VERSION}")
+      client.send_message(clean_name, Numerics::RPL_YOURHOST, nick, ":Your host is #{@@config.host}, running version Circed #{VERSION}")
       client.send_message(clean_name, Numerics::RPL_CREATED, nick, ":This server was created #{Server.created}")
-      client.send_message(clean_name, Numerics::RPL_MYINFO, nick, @@name, "Circed", "o o o")
+      client.send_message(clean_name, Numerics::RPL_MYINFO, nick, Server.name, "Circed", "o o o")
       client.send_message(clean_name, Numerics::RPL_ISUPPORT, nick, ":CASEMAPPING=ascii", "are supported by this server")
       client.send_message(clean_name, Numerics::RPL_ISUPPORT, nick, ":PREFIX=(ohv)@%+", "are supported by this server")
       data = ""
@@ -67,12 +70,12 @@ module Circed
 
     def self.start_message
       puts " Circed #{VERSION}"
-      puts " Running on #{@@address}"
+      puts " Running on #{config.host}:#{config.port}"
       puts " ---"
     end
 
     def self.address
-      ":" + @@address
+      ":" + config.host
     end
 
     def self.motd(client : Client)
@@ -90,11 +93,11 @@ module Circed
     end
 
     def self.clean_name
-      ":" + @@name
+      ":" + config.host
     end
 
     def self.name
-      @@name
+      config.host
     end
   end
 end

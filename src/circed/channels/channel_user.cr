@@ -12,14 +12,12 @@ module Circed
       @user_mode = UserMode.new
     end
 
-    def set_mode(mode : String)
-      if mode.starts_with?("+")
-        @user_mode.add(mode.lchop)
-      elsif mode.starts_with?("-")
-        @user_mode.remove(mode.lchop)
-      end
-    rescue e : Exception
-      client.send_message(Server.clean_name, Numerics::ERR_UMODEUNKNOWNFLAG, ":Unknown user mode flag: #{mode}")
+    def add_mode(mode : String)
+      @user_mode.add(mode)
+    end
+
+    def remove_mode(mode : String)
+      @user_mode.remove(mode)
     end
 
     def to_s
@@ -33,12 +31,17 @@ module Circed
       client.nickname
     end
 
+
     def mode_string
       user_mode.to_s
     end
 
     def is_operator?
       user_mode.is_operator?
+    end
+
+    def is_half_operator?
+      user_mode.is_half_operator?
     end
 
     def is_voiced?
