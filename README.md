@@ -11,6 +11,13 @@ This is an crystal IRC server made to follow the spec over time. Right now it is
 * send messages in channels
 * Kick user from channel
 * invite user to channel
+* set topic in channel
+* make channel private
+* set password on channel
+* set limit on channel
+* set channel as secret
+* able to list channels
+* ban user from channel
 
 ## Plan to have:
 * chan modes
@@ -22,7 +29,6 @@ This is an crystal IRC server made to follow the spec over time. Right now it is
 * NickServ
 * ChanServ
 * Server-to-server communication
-* Simple config in YML
 
 
 ## How to run
@@ -31,6 +37,9 @@ Would need crystal >= 1.4 to build this server.
 1. clone this repo
 2. build the program with: `crystal build --release ./src/circed.cr`
 3. run the program with `./circed` 
+
+### Config
+The config is in `config.yml` and is pretty self explanatory. You can change the port, hostname, stats and other things.
 
 ## Known issues
 * modes is not there for users, channels

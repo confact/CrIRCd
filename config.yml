@@ -1,0 +1,11 @@
+host: "localhost"
+port: 6667
+max_users: 1000
+link_password: "password"
+linked_servers:
+  - host: "server1.example.com"
+    port: 6667
+    link_password: "password1"
+  - host: "server2.example.com"
+    port: 6667
+    link_password: "password2"

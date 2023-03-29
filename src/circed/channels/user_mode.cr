@@ -19,7 +19,7 @@ module Circed
 
     def add(mode)
       if VALID_MODES.includes?(mode)
-        @mode += mode
+        @mode += mode unless @mode.includes?(mode)
       else
         raise Exception.new("Invalid mode: #{mode}")
       end
@@ -58,10 +58,12 @@ module Circed
       @mode.includes?("o")
     end
 
+    def is_half_operator?
+      @mode.includes?("h")
+    end
+
     def is_voiced?
       @mode.includes?("v")
     end
-
-
   end
 end

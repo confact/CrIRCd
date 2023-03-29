@@ -2,7 +2,7 @@ version: 2.0
 shards:
   ameba:
     git: https://github.com/crystal-ameba/ameba.git
-    version: 1.0.0
+    version: 1.0.1
 
   cron_parser:
     git: https://github.com/kostya/cron_parser.git
@@ -18,5 +18,5 @@ shards:
 
   tasker:
     git: https://github.com/spider-gazelle/tasker.git
-    version: 2.0.5
+    version: 2.0.7
 
