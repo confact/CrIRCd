@@ -1,8 +1,6 @@
 module Circed
   class Actions::Topic
 
-    @@command = "TOPIC"
-
     extend Circed::ActionHelper
 
     def self.call(sender : Client, message : Array(String))

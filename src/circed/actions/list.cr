@@ -1,6 +1,5 @@
 module Circed
   class Actions::List
-    @@command = "LIST"
 
     extend Circed::ActionHelper
 

@@ -1,22 +1,30 @@
 module Circed
   module ActionHelper
 
+    macro extended
+      COMMAND = {{@type.name.split("::").last.upcase}}
+
+      def self.command
+        {{@type.name}}::COMMAND
+      end
+    end
+
     def parse(sender : Client, message, io : IO)
       prefix = FastIRC::Prefix.new(source: sender.nickname.to_s, user: sender_user(sender), host: sender_host(sender))
       text = String.build do |io|
-        FastIRC::Message.new(@@command, message, prefix: prefix).to_s(io)
+        FastIRC::Message.new(command, message, prefix: prefix).to_s(io)
       end
       Log.debug { "Parsed: #{text}" }
-      FastIRC::Message.new(@@command, message, prefix: prefix).to_s(io)
+      FastIRC::Message.new(command, message, prefix: prefix).to_s(io)
     end
 
     def parse(sender : Client, receiver, message, io : IO)
       prefix = FastIRC::Prefix.new(source: sender.nickname.to_s, user: sender_user(sender), host: sender_host(sender))
       text = String.build do |io|
-        FastIRC::Message.new(@@command, [receiver, message], prefix: prefix).to_s(io)
+        FastIRC::Message.new(command, [receiver, message], prefix: prefix).to_s(io)
       end
       Log.debug { "Parsed: #{text}" }
-      FastIRC::Message.new(@@command, [receiver, message], prefix: prefix).to_s(io)
+      FastIRC::Message.new(command, [receiver, message], prefix: prefix).to_s(io)
     end
 
     def send_to_channel(channel : String, &block)

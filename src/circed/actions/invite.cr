@@ -1,8 +1,6 @@
 module Circed
   class Actions::Invite
 
-    @@command = "INVITE"
-
     extend Circed::ActionHelper
 
     def self.call(sender, receiver, message)

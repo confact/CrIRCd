@@ -7,6 +7,8 @@ module Circed
     getter created : Time = Time.utc
     getter max_users : Int32
     getter link_password : String
+    getter server_password : String? = nil
+    getter network : String
     getter linked_servers : Array(LinkedServer) = [] of LinkedServer
   end
 end
