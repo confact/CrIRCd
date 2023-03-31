@@ -1,8 +1,6 @@
 module Circed
   class Actions::Part
 
-    @@command = "PART"
-
     extend Circed::ActionHelper
 
     def self.call(sender, channel : String)

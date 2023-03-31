@@ -31,16 +31,26 @@ module Circed
         return
       end
 
+      if has_mode?("l") && users.size >= (get_mode_param("l").try(&.to_i) || Int32::MAX)
+        user.send_message(Server.clean_name, Numerics::ERR_CHANNELISFULL, irc_name, ":Cannot join channel (Channel is full)")
+        return
+      end
+
+      if has_mode?("i") && !user_in_channel?(user)
+        user.send_message(Server.clean_name, Numerics::ERR_INVITEONLYCHAN, irc_name, ":Cannot join channel (Invite only)")
+        return
+      end
+
       if user_in_channel?(user)
         user.send_message(Server.clean_name, Numerics::ERR_USERONCHANNEL, ":You are already on #{@name}")
         return
       end
       channel_user = ChannelUser.new(user, self)
-      if @users.empty?
+      if users.empty?
         channel_user.add_mode("o")
       end
       @users << channel_user
-      @users.each do |u|
+      users.each do |u|
         u.send_message_to_server("JOIN", user.nickname.to_s, user.user.try(&.name), user.host, [name])
       end
       if @topic.empty?
@@ -49,6 +59,8 @@ module Circed
         user.send_message(Server.clean_name, Numerics::RPL_TOPIC, user.nickname.to_s, name, ":#{topic}")
         user.send_message(Server.clean_name, Numerics::RPL_TOPICTIME, user.nickname.to_s, name, "#{topic_setter.try(&.nickname)} #{@topic_set_at.try(&.to_unix)}")
       end
+
+      user.send_message(Server.clean_name, Numerics::RPL_CHANNELMODEIS, user.nickname.to_s, name, mode_string)
 
       user.send_message(Server.clean_name, Numerics::RPL_NAMREPLY, user.nickname.to_s, "=", name, ":#{users.map(&.to_s).join(" ")}")
       user.send_message(Server.clean_name, Numerics::RPL_ENDOFNAMES, user.nickname.to_s, name, ":End of NAMES list")
@@ -59,15 +71,15 @@ module Circed
         user.send_message(Server.clean_name, Numerics::ERR_NOTONCHANNEL, irc_name, ":You're not on that channel")
         return
       end
-      @users.delete(find_user(user))
-      @users.each do |u|
+      users.each do |u|
         u.send_message_to_server("PART", user.nickname.to_s, user.user.try(&.name), user.host, [name])
       end
+      @users.delete(find_user(user))
     end
 
     def send_message(user : Client, message : String)
       if user_in_channel?(user)
-        @users.each do |u|
+        users.each do |u|
           next if u.client == user
           u.send_message_to_server("PRIVMSG", user.nickname.to_s, user.user.try(&.name), user.host, [name] + [message])
         end
@@ -78,7 +90,7 @@ module Circed
 
     def send_raw(user : Client, command : String, nickname : String, user_name : String, host : String, params : Array(String))
       if user_in_channel?(user)
-        @users.each do |u|
+        users.each do |u|
           next if u.client == user
           u.send_message_to_server(command, nickname, user_name, host, params)
         end
@@ -107,8 +119,39 @@ module Circed
         elsif mode.starts_with?("-")
           target_user.remove_mode(mode[1..-1])
         end
-        @users.each do |u|
+        users.each do |u|
           u.send_message_to_server("MODE", sender.nickname.to_s, sender.user.try(&.name), sender.host, [name, mode, target_nick])
+        end
+      else
+        sender.send_message(Server.clean_name, Numerics::ERR_CHANOPRIVSNEEDED, irc_name, ":You must be a channel operator or a half-operator")
+      end
+    end
+
+    def change_channel_ban(sender, mode_action, target_nick)
+      unless user_in_channel?(sender)
+        sender.send_message(Server.clean_name, Numerics::ERR_NOTONCHANNEL, irc_name, ":You're not on that channel")
+        return
+      end
+      channel_user = find_user(sender)
+      target_user = find_user_by_nickname(target_nick)
+      irc_name = sender.nickname.to_s
+
+      if target_user.nil?
+        sender.send_message(Server.clean_name, Numerics::ERR_USERNOTINCHANNEL, target_nick, irc_name, ":User is not in the channel")
+        return
+      end
+
+      if channel_user.try(&.is_operator?) || channel_user.try(&.is_half_operator?)
+        # check if it needs to be added or removed
+        if mode_action == "+b"
+          Log.info { "Adding ban in #{name} for #{target_user.hostmask}" }
+          add_ban(target_user.hostmask)
+        elsif mode_action == "-b"
+          Log.info { "Removing ban in #{name} for #{target_user.hostmask}" }
+          remove_ban(target_user.hostmask)
+        end
+        users.each do |u|
+          u.send_message_to_server("MODE", sender.nickname.to_s, sender.user.try(&.name), sender.host, [name, mode_action.to_s, target_user.hostmask.to_s])
         end
       else
         sender.send_message(Server.clean_name, Numerics::ERR_CHANOPRIVSNEEDED, irc_name, ":You must be a channel operator or a half-operator")
@@ -147,6 +190,8 @@ module Circed
         mode_action = mode[0]
         mode_flags = mode[1..-1]
 
+        Log.debug { "Changing mode #{mode_flags} for #{name} to #{mode_action}" }
+
         mode_flags.each_char do |flag|
           case flag
           when 'o', 'h', 'v'
@@ -157,6 +202,7 @@ module Circed
             end
           when 'l'
             if channel_user.try(&.is_operator?)
+              Log.info { "Changing channel limit for #{name} to #{target_nick}" }
               if target_nick.nil?
                 sender.send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, "MODE", ":Not enough parameters")
               else
@@ -165,7 +211,27 @@ module Circed
             else
               sender.send_message(Server.clean_name, Numerics::ERR_CHANOPRIVSNEEDED, irc_name, ":You must be a channel operator")
             end
-          when 'i', 'm', 'n', 't', 's', 'k', 'b'
+          when 'k'
+            if channel_user.try(&.is_operator?)
+              if target_nick.nil?
+                sender.send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, "MODE", ":Not enough parameters")
+              else
+                change_channel_key(sender, mode_action, target_nick)
+              end
+            else
+              sender.send_message(Server.clean_name, Numerics::ERR_CHANOPRIVSNEEDED, irc_name, ":You must be a channel operator")
+            end
+          when 'b'
+            if channel_user.try(&.is_operator?)
+              if target_nick.nil?
+                sender.send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, "MODE", ":Not enough parameters")
+              else
+                change_channel_ban(sender, mode_action, target_nick)
+              end
+            else
+              sender.send_message(Server.clean_name, Numerics::ERR_CHANOPRIVSNEEDED, irc_name, ":You must be a channel operator")
+            end
+          when 'i', 'm', 'n', 't', 's'
             if channel_user.try(&.is_operator?)
               handle_channel_mode(sender, mode_action, flag)
             else
@@ -176,27 +242,20 @@ module Circed
           end
         end
       else
+        Log.debug { "Unknown mode #{mode} for #{name}" }
         sender.send_message(Server.clean_name, Numerics::ERR_UNKNOWNMODE, mode, ":Unknown mode flag")
       end
     end
 
-    PARAM_PLACEHOLDER = "PARAM"
-
     def handle_channel_mode(sender : Client, mode_action : Char, flag : Char)
       # Handle channel mode changes here
 
-      plus = mode_action == "+"
-      minus = mode_action == "-"
+      plus = mode_action == '+'
+      minus = mode_action == '-'
 
       if ['i', 'm', 'n', 't', 's'].includes?(flag)
         if plus
           add_mode(flag.to_s)
-        elsif minus
-          remove_mode(flag.to_s)
-        end
-      elsif ['k', 'l', 'b'].includes?(flag)
-        if plus
-          add_mode(flag.to_s, PARAM_PLACEHOLDER)
         elsif minus
           remove_mode(flag.to_s)
         end
@@ -213,9 +272,11 @@ module Circed
       channel_user = find_user(sender)
 
       if channel_user.try(&.is_operator?) || channel_user.try(&.is_half_operator?)
-        if mode_action == "+"
+        if mode_action == '+'
+          Log.debug { "Changing channel limit for #{name} to #{new_limit}" }
           add_mode("l", new_limit.to_s)
-        elsif mode_action == "-"
+        elsif mode_action == '-'
+          Log.debug { "Removing channel limit for #{name}" }
           remove_mode("l")
         end
         @users.each do |u|
@@ -228,9 +289,9 @@ module Circed
 
     def add_mode(mode : String, param : String? = nil)
       if param
-        modes[mode] = "#{mode}=#{param}"
+        modes[mode] = param
       else
-        modes[mode] = mode
+        modes[mode] = nil
       end
     end
 
@@ -239,13 +300,29 @@ module Circed
     end
 
     def has_mode?(mode : String) : Bool
-      modes.any? { |_, value| value && value.starts_with?(mode) }
+      modes.has_key?(mode)
+    end
+
+    # Returns the modes as a string like "+nt" and if there are any params, 
+    def mode_string
+      mode_chars = ""
+      mode_params = ""
+
+      modes.each do |key, value|
+        mode_chars += key
+        mode_params += " #{value}" if value
+      end
+
+      return "" if mode_chars.empty? && mode_params.empty?
+
+      "+#{mode_chars}#{mode_params}"
     end
 
     def get_mode_param(mode : String) : String?
-      mode_entry = modes.find { |_, value| value && value.starts_with?(mode) }
-      mode_entry.try { |_, value| value && value.split('=').try(&.[1]) }
-    end    
+      if modes.has_key?(mode) && modes[mode]
+        modes[mode]? 
+      end
+    end
 
     def private?
       has_mode?("p")
@@ -255,15 +332,35 @@ module Circed
       get_mode_param("k")
     end
 
+    def change_channel_key(sender, mode_action, new_key)
+      channel_user = find_user(sender)
+
+      if channel_user.try(&.is_operator?) || channel_user.try(&.is_half_operator?)
+        Log.debug { "channel_user: #{channel_user} - is operator or half operator" }
+        if mode_action == '+'
+          Log.debug { "Changing channel key for #{name} to #{new_key}" }
+          add_mode("k", new_key)
+        elsif mode_action == '-'
+          Log.debug { "Removing channel key for #{name}" }
+          remove_mode("k")
+        end
+        users.each do |u|
+          u.send_message_to_server("MODE", sender.nickname.to_s, sender.user.try(&.name), sender.host, [name, "#{mode_action}k", new_key])
+        end
+      else
+        sender.send_message(Server.clean_name, Numerics::ERR_CHANOPRIVSNEEDED, irc_name, ":You must be a channel operator or a half-operator")
+      end
+    end
+
     def user_in_channel?(user)
       @users.any? { |u| u.client == user }
     end
 
-    def find_user(user)
+    def find_user(user) : ChannelUser?
       @users.find { |u| u.client == user }
     end
 
-    def find_user_by_nickname(nickname : String)
+    def find_user_by_nickname(nickname : String) : ChannelUser?
       @users.find { |u| u.nickname == nickname }
     end
 

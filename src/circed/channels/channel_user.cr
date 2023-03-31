@@ -31,6 +31,9 @@ module Circed
       client.nickname
     end
 
+    def hostmask
+      client.hostmask || ""
+    end
 
     def mode_string
       user_mode.to_s

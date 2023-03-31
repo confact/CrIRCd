@@ -1,8 +1,6 @@
 module Circed
   class Actions::Kick
 
-    @@command = "KICK"
-
     extend Circed::ActionHelper
 
     def self.call(sender, message)

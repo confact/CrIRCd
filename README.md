@@ -18,12 +18,16 @@ This is an crystal IRC server made to follow the spec over time. Right now it is
 * set channel as secret
 * able to list channels
 * ban user from channel
+* able to lookup ip and hostname of user
+* whois user
+* logging last active time of user
+* logging signon time of user
 
 ## Plan to have:
 * chan modes
 * User modes
 * GLines support
-* Resolve ip address and lookup for bans
+* lookup for bans
 * Server OPs
 * SSL TLS support
 * NickServ

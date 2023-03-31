@@ -85,6 +85,14 @@ module Circed
       end
     end
 
+    def self.channel_has_password?(channel : String) : Bool
+      if @@channels[channel]? != nil
+        @@channels[channel].channel_password != nil
+      else
+        false
+      end
+    end
+
     def self.channel_password(channel : String) : String?
       if @@channels[channel]? != nil
         @@channels[channel].channel_password

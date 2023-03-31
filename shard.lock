@@ -4,9 +4,17 @@ shards:
     git: https://github.com/crystal-ameba/ameba.git
     version: 1.0.1
 
+  coffee:
+    git: https://github.com/636f7374/coffee.cr.git
+    version: 0.1.1
+
   cron_parser:
     git: https://github.com/kostya/cron_parser.git
     version: 0.4.0
+
+  durian:
+    git: https://github.com/636f7374/durian.cr.git
+    version: 0.1.5
 
   fast_irc:
     git: https://github.com/rx14/fast_irc.cr.git
@@ -16,7 +24,19 @@ shards:
     git: https://github.com/crystal-community/future.cr.git
     version: 1.0.0
 
+  ipaddress:
+    git: https://github.com/64726f70/ipaddress.cr.git
+    version: 1.0.0
+
   tasker:
     git: https://github.com/spider-gazelle/tasker.git
     version: 2.0.7
+
+  watcher:
+    git: https://github.com/faustinoaq/watcher.git
+    version: 0.3.0
+
+  wrench:
+    git: https://github.com/73686f77/wrench.cr.git
+    version: 0.1.3
 

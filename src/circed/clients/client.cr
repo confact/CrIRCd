@@ -6,6 +6,9 @@ module Circed
     getter socket : TCPSocket?
     getter host : String?
     getter nickname : String?
+    getter hostmask : String?
+    property last_activity : Time
+    getter signon_time : Time
 
     getter user : User?
 
@@ -13,6 +16,9 @@ module Circed
 
     def initialize(@socket : Socket?)
       @host = @socket.try(&.remote_address.to_s)
+      set_hostmask
+      @last_activity = Time.utc
+      @signon_time = Time.utc
     end
 
     def setup
@@ -24,35 +30,38 @@ module Circed
       while !socket.not_nil!.closed?
         FastIRC.parse(socket.not_nil!) do |payload|
           case payload.command
-          when "LIST"
+          when Actions::List::COMMAND
             Actions::List.call(self)
-          when "NICK"
-            set_nickname(payload.params.first)
+          when Actions::Whois::COMMAND
+            Actions::Whois.call(self, payload.params.first)
+          when Actions::Nick::COMMAND
+            Actions::Nick.call(self, payload.params.first)
           when "USER"
             set_user(payload.params)
           when "PONG"
             pong(payload.params)
           when "PING"
             ping(payload.params)
-          when "JOIN"
+          when Actions::Join::COMMAND
             next if payload.params.empty?
-            join_channel(payload.params.first)
-          when "PART"
-            part_channel(payload.params.first)
-          when "MODE"
-            mode(payload.params)
+            Actions::Join.call(self, payload.params.first)
+          when Actions::Part::COMMAND
+            Actions::Part.call(self, payload.params.first)
+          when Actions::Mode::COMMAND
+            Actions::Mode.call(self, payload.params)
           when "QUIT"
             quit(payload.params)
-          when "KICK"
-            kick(payload.params)
-          when "TOPIC"
-            topic(payload.params)
-          when "INVITE"
-            invite(payload.params)
+          when Actions::Kick::COMMAND
+            Actions::Kick.call(self, payload.params)
+          when Actions::Topic::COMMAND
+            Actions::Topic.call(self, payload.params)
+          when Actions::Invite::COMMAND
+            invited_user = payload.params.first
+            Actions::Invite.call(self, invited_user, payload.params)
           when "NOTICE"
             notice(payload.params)
-          when "PRIVMSG"
-            private_message(payload.params.first, payload.params)
+          when Actions::Privmsg::COMMAND
+            Actions::Privmsg.call(self, payload.params.first, payload.params)
           end
         end
 
@@ -62,17 +71,15 @@ module Circed
         end
       end
     rescue e : IO::Error
+      Log.warn(exception: e) { "IO Error" }
       shutdown
       UserHandler.remove_connection(nickname.to_s) unless nickname.to_s.empty?
     rescue e : Circed::ClosedClient
       UserHandler.remove_connection(nickname.to_s) unless nickname.to_s.empty?
     rescue e : Exception
+      Log.error(exception: e) { "Error" }
       shutdown
       UserHandler.remove_connection(nickname.to_s) unless nickname.to_s.empty?
-    end
-
-    def set_nickname(new_nickname)
-      Actions::Nick.call(self, new_nickname)
     end
 
     def set_user(users_messages : Array(String))
@@ -85,16 +92,10 @@ module Circed
       @pingpong = Pingpong.new(self)
     end
 
-    def private_message(receiver : String, message : Array(String))
-      Actions::Privmsg.call(self, receiver, message)
-    end
-
-    def join_channel(channel : String)
-      Actions::Join.call(self, channel)
-    end
-
-    def part_channel(channel : String)
-      Actions::Part.call(self, channel)
+    def set_hostmask
+      temp_hostmask = get_hostmask
+      @hostmask = temp_hostmask
+      Log.debug { "Set hostmask to: #{hostmask}" }
     end
 
     def quit(_message)
@@ -115,25 +116,8 @@ module Circed
       send_message(":#{message}")
     end
 
-    def mode(message)
-      Actions::Mode.call(self, message)
-    end
-
     def nickname=(new_nickname)
       @nickname = new_nickname
-    end
-
-    def topic(message)
-      Actions::Topic.call(self, message)
-    end
-
-    def kick(message)
-      Actions::Kick.call(self, message)
-    end
-
-    def invite(message)
-      invited_user = message.first
-      Actions::Invite.call(self, invited_user, message)
     end
 
     def send_message(prefix, command, *params)
@@ -148,7 +132,7 @@ module Circed
 
     def send_message_to_receiver(command, sender_nickname, sender_user, sender_host, params : Array(String))
       return unless socket
-
+      update_activity
       prefix = FastIRC::Prefix.new(source: sender_nickname, user: sender_user, host: sender_host)
       FastIRC::Message.new(command, [user.not_nil!.name] + params, prefix: prefix).to_s(socket.not_nil!)
       Log.debug { "sending message to #{sender_nickname}" }
@@ -160,7 +144,7 @@ module Circed
 
     def send_message_to_server(command, sender_nickname, sender_user, sender_host, params : Array(String))
       return unless socket
-
+      update_activity
       prefix = FastIRC::Prefix.new(source: sender_nickname, user: sender_user, host: sender_host)
       FastIRC::Message.new(command, params, prefix: prefix).to_s(socket.not_nil!)
       Log.debug { "sending message to #{sender_nickname}" }
@@ -187,6 +171,10 @@ module Circed
       #return if @last_checked && @last_checked.not_nil! < 5.seconds.ago
     end
 
+    def channels
+      ChannelHandler.user_channels(self)
+    end
+
     def shutdown
       ChannelHandler.remove_user_from_all_channels(self)
       if @pingpong
@@ -194,6 +182,21 @@ module Circed
         @pingpong.try(&.stop_pong_check)
       end
       socket.try(&.close)
+      Log.info { "#{@nickname} has disconnected" }
     end
+
+    def update_activity
+      @last_activity = Time.utc
+    end
+
+    private def get_hostname : String?
+      Hostname.get_hostname(socket.not_nil!) || "localhost"
+    end
+
+    private def get_hostmask : String?
+      hostname = get_hostname
+      "#{nickname}!#{user.try(&.name)}@#{hostname}"
+    end
+
   end
 end

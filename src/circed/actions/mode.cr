@@ -1,24 +1,25 @@
 module Circed
   class Actions::Mode
 
-    @@command = "MODE"
-
     extend Circed::ActionHelper
 
-    def self.call(sender, message)
+    def self.call(sender, message : Array(String))
+      return if message.empty?
+
       user_or_channel = message.first
       if user_or_channel.starts_with?("#")
         channel = ChannelHandler.get_channel(user_or_channel)
         if channel
-          # check if it is a channel mode or a user mode
-          if message[1].starts_with?("+") || message[1].starts_with?("-")
+          if message.size > 1 && (message[1].starts_with?("+") || message[1].starts_with?("-"))
             # channel mode
-            target_nick = message[2]
+            target_nick = message[2]?
             channel.change_channel_mode(sender, message[1], target_nick)
           else
             # user mode
-            target_nick = message[1]
-            channel.change_user_mode(sender, target_nick, message[2..-1].join)
+            if message.size > 1
+              target_nick = message[1]
+              channel.change_user_mode(sender, target_nick, message[2..-1].join)
+            end
           end
         else
           send_error(sender, Numerics::ERR_NOSUCHCHANNEL, user_or_channel, "No such channel")

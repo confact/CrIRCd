@@ -14,8 +14,12 @@ dependencies:
   tasker:
     github: spider-gazelle/tasker
     version: ~> 2.0
+  durian:
+    github: 636f7374/durian.cr
   fast_irc:
     github: RX14/fast_irc.cr
+  watcher:
+    github: faustinoaq/watcher
 
 development_dependencies:
   ameba:

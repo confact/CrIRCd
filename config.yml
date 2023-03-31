@@ -1,6 +1,8 @@
 host: "localhost"
 port: 6667
 max_users: 1000
+server_password: nil
+network: "TestNet"
 link_password: "password"
 linked_servers:
   - host: "server1.example.com"
