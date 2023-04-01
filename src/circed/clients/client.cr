@@ -191,6 +191,7 @@ module Circed
     end
 
     private def get_hostname : String?
+      return "localhost" unless socket
       Hostname.get_hostname(socket.not_nil!) || "localhost"
     end
 

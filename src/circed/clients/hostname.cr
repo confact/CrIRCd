@@ -27,6 +27,16 @@ module Circed
     end
 
     def self.get_hostname(socket : TCPSocket) : String
+      if socket.nil? || socket.is_a?(DummySocket)
+        return "localhost"
+      end
+      get_hostname(socket.remote_address.address)
+    end
+
+    def self.get_hostname(socket : IPSocket) : String
+      if socket.nil? || socket.is_a?(DummySocket)
+        return "localhost"
+      end
       get_hostname(socket.remote_address.address)
     end
 

@@ -43,19 +43,19 @@ describe Circed::Channel do
 
   it "should be able to change mode" do
     channel = Circed::Channel.new("#test")
-    channel.mode.should eq("")
+    channel.modes.should eq({} of String => String)
     client = Circed::Client.new(nil)
     channel.add_client(client)
-    channel.change_user_mode(client, "+o")
-    channel.mode.should eq("o")
+    channel.change_channel_mode(client, "+s")
+    channel.modes.should eq({ "s" => nil })
   end
 
   it "should not be able to change mode if not part of channel" do
     channel = Circed::Channel.new("test")
-    channel.mode.should eq("")
+    channel.modes.should eq({} of String => String)
     client = Circed::Client.new(nil)
-    channel.change_user_mode(client, "+o")
-    channel.mode.should eq("")
+    channel.change_channel_mode(client, "+s")
+    channel.modes.should eq({} of String => String)
   end
 
   it "should be able to change topic if part of channel" do

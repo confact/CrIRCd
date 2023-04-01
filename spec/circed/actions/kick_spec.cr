@@ -33,7 +33,7 @@ describe Circed::Actions::Kick do
 
     Circed::Actions::Kick.kick(sender, channel, "Bob", "testing kick")
 
-    channel.users.includes?(kicked_user).should be_false
+    channel.user_in_channel?(kicked_user).should be_false
   end
 
   it "does not kick a user if sender is not an operator" do
@@ -42,13 +42,16 @@ describe Circed::Actions::Kick do
     channel = Circed::Channel.new("#test")
     channel.add_client(sender)
     channel.add_client(kicked_user)
-    channel.find_user(sender).not_nil!.set_mode("-o")
+    channel.find_user(sender).not_nil!.remove_mode("o")
+
+    channel.user_in_channel?(sender).should be_true
+
     channel.find_user(sender).not_nil!.user_mode.to_s.should eq("")
 
     Circed::ChannelHandler.add_channel(channel)
 
     Circed::Actions::Kick.kick(sender, channel, "Bob", "testing kick")
 
-    channel.users.includes?(kicked_user).should be_true
+    channel.user_in_channel?(kicked_user).should be_true
   end
 end
