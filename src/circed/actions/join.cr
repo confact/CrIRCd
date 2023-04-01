@@ -28,19 +28,20 @@ module Circed
             send_error(sender, Numerics::ERR_BADCHANNELKEY, ch, "Channel has a password")
             next
           end
+
           if password != ChannelHandler.channel_password(ch)
             send_error(sender, Numerics::ERR_BADCHANNELKEY, ch, "Channel has a password")
             next
           end
         end
         #
-        add_user_to_channel(ch, sender)
+        add_user_to_channel(ch, sender, password)
         # send_message(Server.clean_name, "JOIN", channel)
       end
     end
 
-    def self.add_user_to_channel(channel, user)
-      ChannelHandler.add_user_to_channel(channel, user)
+    def self.add_user_to_channel(channel, user, password : String? = nil)
+      ChannelHandler.add_user_to_channel(channel, user, password)
     end
   end
 end

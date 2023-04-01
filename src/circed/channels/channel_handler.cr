@@ -10,10 +10,10 @@ module Circed
       @@channels.clear
     end
 
-    def self.add_user_to_channel(channel : String, client : Client)
-      add_channel(channel)
+    def self.add_user_to_channel(channel : String, client : Client, password : String? = nil)
+      channel_obj = add_channel(channel)
 
-      @@channels[channel].add_client(client)
+      channel_obj.add_client(client, password)
     end
 
     def self.add_channel(channel : String) : Channel
