@@ -1,10 +1,10 @@
 module Circed
   class UserMode
     VALID_MODES = ["o", "h", "v"]
-    MODE_HASH = {
+    MODE_HASH   = {
       "o" => "@",
       "h" => "%",
-      "v" => "+"
+      "v" => "+",
     }
 
     getter mode : String = ""

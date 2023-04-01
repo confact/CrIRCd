@@ -1,6 +1,5 @@
 module Circed
   class Actions::Privmsg
-
     extend Circed::ActionHelper
 
     def self.call(sender, receiver, message : Array(String))

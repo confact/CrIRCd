@@ -2,8 +2,7 @@ require "tasker"
 
 module Circed
   class Client
-
-    getter socket : TCPSocket?
+    getter socket : IPSocket? = nil
     getter host : String?
     getter nickname : String?
     getter hostmask : String?
@@ -14,8 +13,10 @@ module Circed
 
     @pingpong : Pingpong?
 
-    def initialize(@socket : Socket?)
-      @host = @socket.try(&.remote_address.to_s)
+    def initialize(@socket : IPSocket?)
+      if @socket.is_a?(TCPSocket)
+        @host = @socket.try(&.remote_address.to_s)
+      end
       set_hostmask
       @last_activity = Time.utc
       @signon_time = Time.utc
@@ -163,12 +164,12 @@ module Circed
     def pong(params : Array(String))
       @pingpong.try(&.pong(params))
       Log.debug { "PONG #{@nickname}" }
-      #send_message("PING :#{@nickname} :localhost")
+      # send_message("PING :#{@nickname} :localhost")
     end
 
     def ping(params : Array(String))
       @pingpong.try(&.ping(params))
-      #return if @last_checked && @last_checked.not_nil! < 5.seconds.ago
+      # return if @last_checked && @last_checked.not_nil! < 5.seconds.ago
     end
 
     def channels

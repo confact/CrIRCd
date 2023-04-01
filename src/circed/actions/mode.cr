@@ -1,6 +1,5 @@
 module Circed
   class Actions::Mode
-
     extend Circed::ActionHelper
 
     def self.call(sender, message : Array(String))

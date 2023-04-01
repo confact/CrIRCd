@@ -1,6 +1,5 @@
 module Circed
   class Actions::Part
-
     extend Circed::ActionHelper
 
     def self.call(sender, channel : String)
@@ -20,7 +19,7 @@ module Circed
           next
         end
         ChannelHandler.remove_user_from_channel(ch, sender)
-        #send_message(Server.clean_name, "PART", channel)
+        # send_message(Server.clean_name, "PART", channel)
       end
     end
   end

@@ -1,7 +1,7 @@
 module Circed
   class Pingpong
-
     class ClosedClient < Exception; end
+
     class PingStoppedException < Exception; end
 
     @last_ping : Time?
@@ -69,7 +69,7 @@ module Circed
     end
 
     private def create_ping_message
-      #prefix = FastIRC::Prefix.new(source: Server.name)
+      # prefix = FastIRC::Prefix.new(source: Server.name)
       String.build do |io|
         prefix = FastIRC::Prefix.new(source: Server.name, user: nickname, host: host.to_s)
         FastIRC::Message.new("PING", [":#{nickname}", Server.clean_name], prefix: prefix).to_s(io)

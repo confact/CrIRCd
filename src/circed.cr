@@ -10,4 +10,4 @@ end
 
 Log.setup_from_env
 
-Circed::Server.start
+Circed::Server.start unless ENV["CIRCED_TEST"]?

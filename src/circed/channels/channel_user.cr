@@ -1,6 +1,5 @@
 module Circed
   class ChannelUser
-
     getter client : Client
     getter channel : Channel
 

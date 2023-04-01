@@ -5,12 +5,16 @@ module Circed
     property topic : String = ""
     property topic_setter : ChannelUser? = nil
     property topic_set_at : Time? = nil
+    property user_limit : Int32 = 200
 
     getter bans : Array(String) = [] of String
 
     getter modes : Hash(String, String?) = {} of String => String?
 
     getter users : Array(ChannelUser) = [] of ChannelUser
+    getter invited_users : Array(Client) = [] of Client
+
+    VALID_CHAN_MODES = ['i', 'm', 'n', 'p', 's', 't', 'k', 'l', 'b', 'v', 'o']
 
     def initialize(name)
       if name.starts_with?("#")
@@ -386,9 +390,16 @@ module Circed
       @users.empty?
     end
 
+    def invite_only?
+      @mode.includes?("i")
+    end
+
+    def invited?(user : Client)
+      @invited_users.any? { |u| u == user }
+    end
+
     def irc_name
       ":#{@name}"
     end
-
   end
 end

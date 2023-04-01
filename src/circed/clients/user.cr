@@ -1,9 +1,8 @@
 module Circed
   class User
-
     getter client : Client?
 
-    getter mode : String
+    property mode : String
     getter name : String
     getter realname : String
 
@@ -12,6 +11,14 @@ module Circed
 
     def to_s
       "#{name} #{mode} :#{realname}"
+    end
+
+    def is_operator?
+      mode.include? "o"
+    end
+
+    def is_wallops?
+      mode.include? "w"
     end
   end
 end

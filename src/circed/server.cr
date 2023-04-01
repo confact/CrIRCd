@@ -4,6 +4,7 @@ require "watcher"
 
 module Circed
   class ClosedClient < Exception; end
+
   class Server
     class_getter config = Config.from_yaml(File.read("config.yml"))
     @@config_cache : String = File.read("config.yml")

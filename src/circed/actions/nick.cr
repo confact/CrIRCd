@@ -1,6 +1,5 @@
 module Circed
   class Actions::Nick
-
     extend Circed::ActionHelper
 
     def self.call(sender, new_nickname : String)

@@ -1,12 +1,18 @@
 module Circed
   class UserHandler
     class NicknameUsedError < Exception; end
+
     class NicknameNoUsedError < Exception; end
+
     @@clients : Hash(String, Circed::Client) = {} of String => Circed::Client
     @@users : Array(Circed::User) = [] of Circed::User
 
     def self.size
       @@clients.size
+    end
+
+    def self.clear
+      @@clients.clear
     end
 
     def self.add_client(client : Client)

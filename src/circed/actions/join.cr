@@ -1,6 +1,5 @@
 module Circed
   class Actions::Join
-
     extend Circed::ActionHelper
 
     def self.call(sender, channel : String, password : String? = nil)
@@ -36,7 +35,7 @@ module Circed
         end
         #
         add_user_to_channel(ch, sender)
-        #send_message(Server.clean_name, "JOIN", channel)
+        # send_message(Server.clean_name, "JOIN", channel)
       end
     end
 

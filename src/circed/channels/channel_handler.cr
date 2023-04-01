@@ -5,13 +5,26 @@ module Circed
     def self.channels
       @@channels
     end
+    def self.clear
+      @@channels.clear
+    end
 
     def self.add_user_to_channel(channel : String, client : Client)
+      add_channel(channel)
+
+      @@channels[channel].add_client(client)
+    end
+
+    def self.add_channel(channel : String) : Channel
       if @@channels[channel]? == nil
         @@channels[channel] = Channel.new(channel)
       end
 
-      @@channels[channel].add_client(client)
+      @@channels[channel]
+    end
+
+    def self.add_channel(channel : Channel) : Channel
+      @@channels[channel.name] = channel
     end
 
     def self.remove_user_from_channel(channel : String, client : Client)
