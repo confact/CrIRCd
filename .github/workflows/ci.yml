@@ -1,4 +1,4 @@
-name: Errordeck CI
+name: Crirced CI
 
 on:
   push:

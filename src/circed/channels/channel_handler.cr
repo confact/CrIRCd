@@ -5,6 +5,7 @@ module Circed
     def self.channels
       @@channels
     end
+
     def self.clear
       @@channels.clear
     end

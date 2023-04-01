@@ -47,7 +47,7 @@ describe Circed::Channel do
     client = Circed::Client.new(nil)
     channel.add_client(client)
     channel.change_channel_mode(client, "+s")
-    channel.modes.should eq({ "s" => nil })
+    channel.modes.should eq({"s" => nil})
   end
 
   it "should not be able to change mode if not part of channel" do

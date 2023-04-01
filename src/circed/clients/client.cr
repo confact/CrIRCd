@@ -199,6 +199,5 @@ module Circed
       hostname = get_hostname
       "#{nickname}!#{user.try(&.name)}@#{hostname}"
     end
-
   end
 end

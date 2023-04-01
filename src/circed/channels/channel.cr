@@ -307,7 +307,7 @@ module Circed
       modes.has_key?(mode)
     end
 
-    # Returns the modes as a string like "+nt" and if there are any params, 
+    # Returns the modes as a string like "+nt" and if there are any params,
     def mode_string
       mode_chars = ""
       mode_params = ""
@@ -324,7 +324,7 @@ module Circed
 
     def get_mode_param(mode : String) : String?
       if modes.has_key?(mode) && modes[mode]
-        modes[mode]? 
+        modes[mode]?
       end
     end
 

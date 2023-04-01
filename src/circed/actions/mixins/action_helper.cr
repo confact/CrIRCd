@@ -1,6 +1,5 @@
 module Circed
   module ActionHelper
-
     macro extended
       COMMAND = {{@type.name.split("::").last.upcase}}
 

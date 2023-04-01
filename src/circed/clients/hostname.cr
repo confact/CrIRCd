@@ -1,4 +1,5 @@
 require "durian"
+
 module Circed
   class Hostname
     def self.get_hostname(ip_address : String) : String

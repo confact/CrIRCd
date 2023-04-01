@@ -1,6 +1,5 @@
 require "../../spec_helper"
 
-
 def create_test_client(nickname : String) : Circed::Client
   client = Circed::Client.new(DummySocket.new)
   client.nickname = nickname
