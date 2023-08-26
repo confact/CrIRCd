@@ -3,25 +3,25 @@ module Circed
     getter client : Client
     getter channel : Channel
 
-    getter user_mode : UserMode
+    getter modes : UserMode
 
     def initialize(client, channel)
       @client = client
       @channel = channel
-      @user_mode = UserMode.new
+      @modes = UserMode.new
     end
 
     def add_mode(mode : String)
-      @user_mode.add(mode)
+      @modes.add(mode)
     end
 
     def remove_mode(mode : String)
-      @user_mode.remove(mode)
+      @modes.remove(mode)
     end
 
     def to_s
       String.build do |io|
-        io << user_mode.highest_mode
+        io << modes.highest_mode
         io << client.nickname
       end
     end
@@ -35,19 +35,19 @@ module Circed
     end
 
     def mode_string
-      user_mode.to_s
+      modes.to_s
     end
 
     def is_operator?
-      user_mode.is_operator?
+      modes.is_operator?
     end
 
     def is_half_operator?
-      user_mode.is_half_operator?
+      modes.is_half_operator?
     end
 
     def is_voiced?
-      user_mode.is_voiced?
+      modes.is_voiced?
     end
 
     def send_message_to_server(*args)

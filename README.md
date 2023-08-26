@@ -46,8 +46,6 @@ Would need crystal >= 1.4 to build this server.
 The config is in `config.yml` and is pretty self explanatory. You can change the port, hostname, stats and other things.
 
 ## Known issues
-* modes is not there for users, channels
-* can't be op of channels.
 * NAMES list of users in channel is not working correctly
 * Some things like NICK change won't update users in channels of the change yet
 * socket errors
