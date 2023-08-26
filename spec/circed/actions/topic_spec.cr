@@ -78,7 +78,7 @@ describe Circed::Actions::Topic do
     channel.topic_setter.should be_nil
     channel.topic_set_at.should be_nil
 
-    #sender.socket.received_errors.should include({error: Numerics::ERR_CHANOPRIVSNEEDED, message: "You're not an operator on that channel"})
+    # sender.socket.received_errors.should include({error: Numerics::ERR_CHANOPRIVSNEEDED, message: "You're not an operator on that channel"})
   end
 
   it "returns an error for an invalid channel" do
@@ -87,7 +87,7 @@ describe Circed::Actions::Topic do
 
     Circed::Actions::Topic.call(sender, [invalid_channel_name, "new topic"])
 
-    #sender.socket.received_errors.should include({error: Numerics::ERR_NOSUCHCHANNEL, message: "No such channel"})
+    # sender.socket.received_errors.should include({error: Numerics::ERR_NOSUCHCHANNEL, message: "No such channel"})
   end
 
   it "returns an error if a user is not in the channel" do
@@ -102,6 +102,6 @@ describe Circed::Actions::Topic do
     channel.topic_setter.should be_nil
     channel.topic_set_at.should be_nil
 
-    #sender.socket.received_errors.should include({error: Numerics::ERR_NOTONCHANNEL, message: "You're not on that channel"})
+    # sender.socket.received_errors.should include({error: Numerics::ERR_NOTONCHANNEL, message: "You're not on that channel"})
   end
 end

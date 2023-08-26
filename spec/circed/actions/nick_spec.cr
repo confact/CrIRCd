@@ -30,7 +30,7 @@ describe Circed::Actions::Nick do
     Circed::Actions::Nick.call(sender, new_nickname)
 
     sender.nickname.should eq("Alice")
-    #sender.received_errors.should include({error: Numerics::ERR_NICKNAMEINUSE, message: "Nickname is already in used"})
+    # sender.received_errors.should include({error: Numerics::ERR_NICKNAMEINUSE, message: "Nickname is already in used"})
   end
 
   it "sets a nickname for the first time" do

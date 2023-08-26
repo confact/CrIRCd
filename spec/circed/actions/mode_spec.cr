@@ -52,7 +52,6 @@ describe Circed::Actions::Mode do
     end
     (channel.find_user(receiver).try(&.modes) || "").not_nil!.to_s.should contain "o"
 
-
     Circed::Actions::Mode.call(sender, [channel_name, receiver.nickname || "unknown", "-o"])
 
     # channel user modes
@@ -80,7 +79,7 @@ describe Circed::Actions::Mode do
 
     Circed::Actions::Mode.call(sender, [invalid_channel_name, "+m"])
 
-    #sender.socket.received_errors.should include({error: Numerics::ERR_NOSUCHCHANNEL, message: "No such channel"})
+    # sender.socket.received_errors.should include({error: Numerics::ERR_NOSUCHCHANNEL, message: "No such channel"})
   end
 
   it "returns an error for an invalid nickname" do
@@ -93,6 +92,6 @@ describe Circed::Actions::Mode do
 
     Circed::Actions::Mode.call(sender, [channel_name, invalid_nickname, "+o"])
 
-    #sender.socket.received_errors.should include({error: Numerics::ERR_NOSUCHNICK, message: "No such nick"})
+    # sender.socket.received_errors.should include({error: Numerics::ERR_NOSUCHNICK, message: "No such nick"})
   end
 end
