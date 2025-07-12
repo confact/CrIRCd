@@ -34,14 +34,17 @@ module Circed
 
       #go through buffer first
       @buffer.each do |buff|
-        FastIRC.parse(buff) do |payload|
-          irc_commands(payload)
+        begin
+          payload = FastIRC.parse_line(buff)
+          run_commands(payload)
+        rescue ex
+          Log.warn { "Failed to parse IRC line: #{buff} - #{ex.message}" }
         end
       end
 
       while !socket.not_nil!.closed? 
         FastIRC.parse(socket.not_nil!) do |payload|
-          irc_commands(payload)
+          run_commands(payload)
         end
 
         if closed?
@@ -161,7 +164,7 @@ module Circed
       @last_activity = Time.utc
     end
 
-    private def run_commands(payload : FastIRC::Payload)
+    private def run_commands(payload : FastIRC::Message)
       case payload.command
       when Actions::List::COMMAND
         Actions::List.call(self)
@@ -176,7 +179,7 @@ module Circed
       when "PING"
         ping(payload.params)
       when Actions::Join::COMMAND
-        next if payload.params.empty?
+        return if payload.params.empty?
         Actions::Join.call(self, payload.params.first)
       when Actions::Part::COMMAND
         Actions::Part.call(self, payload.params.first)

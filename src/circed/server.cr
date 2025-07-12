@@ -6,8 +6,9 @@ module Circed
   class ClosedClient < Exception; end
 
   class Server
-    class_getter config = Config.from_yaml(File.read("config.yml"))
-    @@config_cache : String = File.read("config.yml")
+    @@config_file : String = ARGV[0]? || "config.yml"
+    class_getter config = Config.from_yaml(File.read(@@config_file))
+    @@config_cache : String = File.read(@@config_file)
 
     # @@servers
 
@@ -16,6 +17,7 @@ module Circed
       server = TCPServer.new(config.host, config.port)
       # @@address = server.local_address.to_s
       start_message
+      bootup_servers  # Connect to configured servers
       loop do
         if client = server.accept?
           # handle the client in a fiber
@@ -30,39 +32,53 @@ module Circed
 
     def self.handle_client(connection)
       buffer = [] of String
-      type = nil
       
-      loop do
-        message = connection.gets?.try(&.strip) || break
-    
-        buffer << message
-    
-        # Check if we can decide the type based on the buffered commands
-        if buffer.includes?("PASS") && buffer.includes?("SERVER")
-          type = :server
-          break
-        elsif buffer.includes?("NICK") && buffer.includes?("USER")
-          type = :client
-          break
-        end
-      end
-    
+      type = determine_connection_type(connection, buffer)
+      
       case type
       when :server
         handle_server_connection(connection, buffer)
       when :client
         handle_user_connection(connection, buffer)
       else
-        Log.warn { "Unknown connection type: #{type}" }
+        Log.warn { "Unknown connection type from #{connection.remote_address}" }
         connection.close
       end
+    end
+
+    private def self.determine_connection_type(connection, buffer)
+      loop do
+        message = connection.gets.try(&.strip) || break
+        buffer << message
+
+        connection_type = detect_connection_type(buffer)
+        return connection_type if connection_type
+      end
+      
+      nil
+    end
+
+    def self.detect_connection_type(buffer) : Symbol?
+      commands = extract_commands(buffer)
+      
+      if commands.includes?("PASS") && commands.includes?("SERVER")
+        :server
+      elsif commands.includes?("NICK") && commands.includes?("USER")
+        :client
+      else
+        nil
+      end
+    end
+
+    def self.extract_commands(buffer) : Set(String)
+      buffer.map { |line| line.split(' ', 2).first.upcase }.to_set
     end
 
     def self.handle_user_connection(client, buffer)
       if UserHandler.size >= config.max_users
         Log.warn { "User limit reached, refusing new client: #{client.remote_address}" }
         client.puts "ERROR :Closing Link: #{client.remote_address} (Max users limit reached)"
-        sleep 1
+        sleep 1.second
         client.close
         return
       end
@@ -74,11 +90,33 @@ module Circed
     end
 
     def self.handle_server_connection(connection, buffer)
-      server = Circed::LinkServer.new(connection, buffer)
-      Log.debug { "new server: #{server.inspect}" }
+      begin
+        server = Circed::LinkServer.new(connection, buffer)
+        Log.debug { "new server connected: #{server.name} from #{server.host}" }
+      rescue ex
+        Log.error { "Failed to establish server connection: #{ex.message}" }
+        connection.close
+      end
     end
 
-    def bootup_servers
+    def self.bootup_servers
+      config.linked_servers.each do |linked_server|
+        spawn do
+          begin
+            Log.info { "Attempting to connect to server: #{linked_server.host}:#{linked_server.port}" }
+            server = Circed::LinkServer.new(
+              linked_server.host, 
+              linked_server.host, 
+              linked_server.port, 
+              linked_server.link_password
+            )
+            Log.info { "Successfully connected to server: #{linked_server.host}" }
+          rescue ex
+            Log.error { "Failed to connect to server #{linked_server.host}:#{linked_server.port} - #{ex.message}" }
+            # Could implement retry logic here
+          end
+        end
+      end
     end
 
     def self.created
@@ -148,11 +186,11 @@ module Circed
 
     def self.watch_config_file
       spawn do
-        watch "config.yml", 2 do |event|
+        watch @@config_file, 2 do |event|
           event.on_change do
-            file_content = File.read("config.yml")
+            file_content = File.read(@@config_file)
             if @@config_cache != file_content
-              Log.info { "config.yml changed, reloading" }
+              Log.info { "#{@@config_file} changed, reloading" }
               @@config_cache = file_content
               @@config = Config.from_yaml(file_content)
             end

@@ -5,9 +5,9 @@ ENV["CIRCED_TEST"] = "true"
 require "../src/circed"
 
 def create_test_client(nickname : String) : Circed::Client
-  client = Circed::Client.new(DummySocket.new)
-  client.nickname = nickname
-  client.set_user(["test", "test", "test", nickname])
-  Circed::UserHandler.add_client(client)
+  socket = DummySocket.new
+  buffer = ["NICK #{nickname}", "USER test test localhost :#{nickname}"]
+  client = Circed::Client.new(socket, buffer)
+  # The client will process the buffer during initialization
   client
 end
