@@ -2,29 +2,28 @@ module Circed
   module Commands
     # RFC 2813 server-to-server commands
     module ServerCommands
-      
       # SQUIT - Server Quit
       # Format: SQUIT <server> :<comment>
       def self.squit(link_server : LinkServer, params : Array(String))
         return if params.empty?
-        
+
         server_name = params[0]
         comment = params[1..]?.try(&.join(" ")) || "No reason"
         comment = comment.lstrip(':')
-        
+
         Log.info { "Received SQUIT for #{server_name}: #{comment}" }
-        
+
         # Forward SQUIT to other servers first (before removing from state)
         forward_to_servers(link_server, "SQUIT", params)
-        
+
         # Remove server from network state (this handles transitive disconnections)
         Network::NetworkState.remove_server(server_name, send_squit: false) # Don't send SQUIT again
-        
+
         # If it's our direct connection, close it
         if server_name == link_server.name
           link_server.close("Received SQUIT: #{comment}")
         end
-        
+
         # Local users are automatically notified by NetworkState.remove_server
       end
 
@@ -32,19 +31,19 @@ module Circed
       # Format: KILL <nickname> :<comment>
       def self.kill(link_server : LinkServer, params : Array(String))
         return if params.size < 2
-        
+
         nickname = params[0]
         comment = params[1..]?.try(&.join(" ")) || "Killed"
         comment = comment.lstrip(':')
-        
+
         Log.info { "Received KILL for #{nickname}: #{comment}" }
-        
+
         # Remove user from network state
         Network::NetworkState.remove_user(nickname)
-        
+
         # Forward KILL to other servers
         forward_to_servers(link_server, "KILL", params)
-        
+
         # If it's a local user, disconnect them
         if local_client = find_local_client(nickname)
           local_client.send_error("Killed: #{comment}")
@@ -56,26 +55,26 @@ module Circed
       # Format: LINKS [<remote server>] [<server mask>]
       def self.links(client : Client, params : Array(String))
         mask = params[0]? || "*"
-        
+
         server_list = Network::NetworkState.server_list(mask)
-        
+
         server_list.each do |server|
           # 364 RPL_LINKS
           # Format: <mask> <server> :<hopcount> <server info>
           client.send_message(
-            Server.clean_name, 
-            "364", 
+            Server.clean_name,
+            "364",
             client.nickname || "*",
             mask,
             server.name,
             ":#{server.hopcount} #{server.description}"
           )
         end
-        
-        # 365 RPL_ENDOFLINKS  
+
+        # 365 RPL_ENDOFLINKS
         client.send_message(
           Server.clean_name,
-          "365", 
+          "365",
           client.nickname || "*",
           mask,
           ":End of LINKS list"
@@ -86,7 +85,7 @@ module Circed
       # Format: STATS [<query>] [<target>]
       def self.stats(client : Client, params : Array(String))
         query = params[0]? || "u"
-        
+
         case query.downcase
         when "u"
           # Uptime statistics
@@ -97,7 +96,6 @@ module Circed
             client.nickname || "*",
             ":Server Up: #{Time.utc - Server.start_time}"
           )
-          
         when "l"
           # Link statistics
           stats = Network::NetworkState.stats
@@ -111,7 +109,6 @@ module Circed
             "0",
             "#{stats[:connections]}"
           )
-          
         when "m"
           # Command statistics (simplified)
           client.send_message(
@@ -123,7 +120,6 @@ module Circed
             "0",
             "0"
           )
-          
         when "o"
           # Operator lines
           client.send_message(
@@ -137,12 +133,12 @@ module Circed
             "Operator"
           )
         end
-        
+
         # 219 RPL_ENDOFSTATS
         client.send_message(
           Server.clean_name,
           "219",
-          client.nickname || "*", 
+          client.nickname || "*",
           query,
           ":End of STATS report"
         )
@@ -152,7 +148,7 @@ module Circed
       # Format: TIME [<target>]
       def self.time(client : Client, params : Array(String))
         target = params[0]?
-        
+
         route_command_or_execute(client, "TIME", target) do
           # 391 RPL_TIME
           current_time = Time.utc
@@ -170,7 +166,7 @@ module Circed
       # Format: VERSION [<target>]
       def self.version(client : Client, params : Array(String))
         target = params[0]?
-        
+
         route_command_or_execute(client, "VERSION", target) do
           # 351 RPL_VERSION
           client.send_message(
@@ -184,20 +180,20 @@ module Circed
         end
       end
 
-      # ADMIN - Administrative information  
+      # ADMIN - Administrative information
       # Format: ADMIN [<target>]
       def self.admin(client : Client, params : Array(String))
         target = params[0]?
-        
+
         route_command_or_execute(client, "ADMIN", target) do
           nick = client.nickname || "*"
-          
+
           # Send admin info responses
           [
             ["256", Server.name, ":Administrative info"],
             ["257", ":Circed IRC Server"],
             ["258", ":Server Location"],
-            ["259", ":admin@#{Server.config.host}"]
+            ["259", ":admin@#{Server.config.host}"],
           ].each do |code, *data|
             client.send_message(Server.clean_name, code, nick, *data)
           end
@@ -208,40 +204,40 @@ module Circed
       # Format: NJOIN <channel> <modes> :<nicknames>
       def self.njoin(link_server : LinkServer, params : Array(String))
         return if params.size < 3
-        
+
         channel_name = params[0]
-        modes_str = params[1] 
+        modes_str = params[1]
         nicknames_str = params[2..]?.try(&.join(" ")) || ""
         nicknames_str = nicknames_str.lstrip(':')
-        
+
         nicknames = nicknames_str.split(' ')
-        
+
         # Parse user modes in channel
         user_modes = Set(Char).new
         if modes_str.starts_with?('+')
           modes_str[1..].each_char { |mode| user_modes << mode }
         end
-        
+
         Log.debug { "NJOIN: #{nicknames.size} users joining #{channel_name} with modes #{modes_str}" }
-        
+
         # Add users to channel in network state
         Network::NetworkState.add_channel(channel_name)
         nicknames.each do |nickname|
           Network::NetworkState.join_user_to_channel(nickname, channel_name, user_modes.dup)
         end
-        
+
         # Forward to other servers (except sender)
         forward_to_servers(link_server, "NJOIN", params)
-        
+
         # Notify local users in channel
         notify_local_users_njoin(channel_name, nicknames, user_modes)
       end
 
       # Helper methods
-      
+
       private def self.forward_to_servers(sender : LinkServer, command : String, params : Array(String))
         message = "#{command} #{params.join(" ")}"
-        
+
         ServerHandler.servers.each do |server|
           next if server == sender
           server.send_message(message)
@@ -259,19 +255,19 @@ module Circed
 
       private def self.notify_local_users_njoin(channel_name : String, nicknames : Array(String), modes : Set(Char))
         Log.debug { "Notifying local users about NJOIN in #{channel_name}" }
-        
+
         # Get all local users currently in the channel
         if channel = Network::NetworkState.get_channel(channel_name)
           local_users = channel.members.keys.select do |nick|
             user_repository = Infrastructure::ServiceLocator.user_repository
             user_repository.get_client(nick) # Only local users have client connections
           end
-          
+
           # Send JOIN messages to each local user for each remote user joining
           nicknames.each do |joining_nick|
             if user_info = Network::NetworkState.get_user(joining_nick)
               join_message = format_user_join(joining_nick, user_info, channel_name)
-              
+
               # Send to all local users in the channel
               local_users.each do |local_nick|
                 user_repository = Infrastructure::ServiceLocator.user_repository
@@ -289,7 +285,6 @@ module Circed
         hostmask = "#{nickname}!#{user_info.username}@#{user_info.hostname}"
         ":#{hostmask} JOIN #{channel_name}"
       end
-      
 
       # Extract common server routing pattern
       private def self.route_command_or_execute(client : Client, command : String, target : String?, &block)
@@ -301,7 +296,7 @@ module Circed
               return
             end
           end
-          
+
           # Server not found
           send_no_such_server_error(client, target)
         else

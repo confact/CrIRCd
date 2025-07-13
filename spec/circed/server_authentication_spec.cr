@@ -8,13 +8,13 @@ describe "Server Authentication Flow" do
           "PASS secret123",
           "SERVER test.server.com 1 :Test IRC Server",
           "NICK testuser",
-          "USER test test localhost :Test User"
+          "USER test test localhost :Test User",
         ]
-        
+
         commands = Circed::Server.extract_commands(buffer)
-        
+
         commands.should contain("PASS")
-        commands.should contain("SERVER") 
+        commands.should contain("SERVER")
         commands.should contain("NICK")
         commands.should contain("USER")
         commands.size.should eq(4)
@@ -23,11 +23,11 @@ describe "Server Authentication Flow" do
       it "handles commands with parameters correctly" do
         buffer = [
           "PASS secret123 extra params",
-          "SERVER test.com 1 :Long server description with spaces"
+          "SERVER test.com 1 :Long server description with spaces",
         ]
-        
+
         commands = Circed::Server.extract_commands(buffer)
-        
+
         commands.should contain("PASS")
         commands.should contain("SERVER")
         commands.size.should eq(2)
@@ -38,12 +38,12 @@ describe "Server Authentication Flow" do
           "pass secret123",
           "server test.com 1 :Test",
           "NICK testuser",
-          "user test test localhost :Test"
+          "user test test localhost :Test",
         ]
-        
+
         commands = Circed::Server.extract_commands(buffer)
-        
-        commands.should contain("PASS")  # Should be uppercase
+
+        commands.should contain("PASS") # Should be uppercase
         commands.should contain("SERVER")
         commands.should contain("NICK")
         commands.should contain("USER")
@@ -57,15 +57,15 @@ describe "Server Authentication Flow" do
 
       it "handles malformed lines gracefully" do
         buffer = [
-          "",  # Empty line
-          "   ",  # Whitespace only
+          "",    # Empty line
+          "   ", # Whitespace only
           "PASS secret123",
           "INVALID_LINE_WITHOUT_SPACES",
-          "SERVER test.com 1 :Test"
+          "SERVER test.com 1 :Test",
         ]
-        
+
         commands = Circed::Server.extract_commands(buffer)
-        
+
         # Should extract valid commands and handle invalid ones
         commands.should contain("PASS")
         commands.should contain("SERVER")
@@ -94,9 +94,9 @@ describe "Server Authentication Flow" do
         it "detects server type with additional commands" do
           buffer = [
             "PASS secret123",
-            "SERVER test.com 1 :Test", 
+            "SERVER test.com 1 :Test",
             "PING :test.com",
-            "PRIVMSG #test :Hello"
+            "PRIVMSG #test :Hello",
           ]
           type = Circed::Server.detect_connection_type(buffer)
           type.should eq(:server)
@@ -125,7 +125,7 @@ describe "Server Authentication Flow" do
             "NICK testuser",
             "USER test test localhost :Test User",
             "JOIN #test",
-            "PRIVMSG #test :Hello"
+            "PRIVMSG #test :Hello",
           ]
           type = Circed::Server.detect_connection_type(buffer)
           type.should eq(:client)
@@ -143,8 +143,8 @@ describe "Server Authentication Flow" do
           buffer = [
             "PASS secret123",
             "SERVER test.com 1 :Test",
-            "NICK testuser", 
-            "USER test test localhost :Test"
+            "NICK testuser",
+            "USER test test localhost :Test",
           ]
           type = Circed::Server.detect_connection_type(buffer)
           type.should eq(:server)
@@ -168,7 +168,7 @@ describe "Server Authentication Flow" do
       valid_passwords.each do |password|
         # Password should be accepted (assuming it matches config)
         password.should_not be_empty
-        password.strip.should eq(password)  # No leading/trailing whitespace
+        password.strip.should eq(password) # No leading/trailing whitespace
       end
     end
 
@@ -176,17 +176,17 @@ describe "Server Authentication Flow" do
       # Test that server introduction without authentication fails
       buffer_no_auth = ["SERVER test.com 1 :Test Server"]
       type = Circed::Server.detect_connection_type(buffer_no_auth)
-      type.should be_nil  # Should not be detected as valid server
+      type.should be_nil # Should not be detected as valid server
     end
 
     it "handles malicious command injection attempts" do
       # Test buffer with potential injection attempts
       malicious_buffer = [
         "PASS secret123\\nSERVER evil.com",  # Newline injection attempt
-        "SERVER test.com 1 :Test\\x00\\x01",  # Null byte injection
-        "PASS secret123; DROP TABLE users;",  # SQL-like injection
+        "SERVER test.com 1 :Test\\x00\\x01", # Null byte injection
+        "PASS secret123; DROP TABLE users;", # SQL-like injection
       ]
-      
+
       # Should still extract basic commands correctly
       commands = Circed::Server.extract_commands(malicious_buffer)
       commands.should contain("PASS")
@@ -197,7 +197,7 @@ describe "Server Authentication Flow" do
   describe "error handling scenarios" do
     it "handles network interruption during authentication" do
       # Simulate incomplete authentication due to network issues
-      buffer = ["PASS secret123"]  # Missing SERVER command
+      buffer = ["PASS secret123"] # Missing SERVER command
       type = Circed::Server.detect_connection_type(buffer)
       type.should be_nil
     end
@@ -207,7 +207,7 @@ describe "Server Authentication Flow" do
       large_buffer = (1..1000).map { |i| "PING :test#{i}" }.to_a
       large_buffer << "PASS secret123"
       large_buffer << "SERVER test.com 1 :Test"
-      
+
       type = Circed::Server.detect_connection_type(large_buffer)
       type.should eq(:server)
     end
@@ -217,10 +217,10 @@ describe "Server Authentication Flow" do
       # Here we just verify the logic doesn't have race conditions
       buffer1 = ["PASS secret1", "SERVER test1.com 1 :Test1"]
       buffer2 = ["NICK user1", "USER test test localhost :Test"]
-      
+
       type1 = Circed::Server.detect_connection_type(buffer1)
       type2 = Circed::Server.detect_connection_type(buffer2)
-      
+
       type1.should eq(:server)
       type2.should eq(:client)
     end

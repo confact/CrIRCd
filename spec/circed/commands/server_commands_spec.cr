@@ -18,14 +18,14 @@ describe Circed::Commands::ServerCommands do
       # Set up network state
       Circed::Network::NetworkState.add_server("target.irc", 1, "Target Server", nil, "301")
       Circed::Network::NetworkState.add_user("testuser", "test", "target.irc", "Test User", "target.irc", 1)
-      
+
       # Initial state
       Circed::Network::NetworkState.stats[:servers].should eq(1)
       Circed::Network::NetworkState.stats[:users].should eq(1)
-      
+
       # Send SQUIT
       Circed::Commands::ServerCommands.squit(link_server, ["target.irc", ":Server maintenance"])
-      
+
       # Server and user should be removed
       Circed::Network::NetworkState.stats[:servers].should eq(0)
       Circed::Network::NetworkState.stats[:users].should eq(0)
@@ -40,14 +40,14 @@ describe Circed::Commands::ServerCommands do
       Circed::Network::NetworkState.add_server("server2.irc", 2, "Server 2", nil, "402")
       Circed::Network::NetworkState.add_server_link("localhost", "server1.irc")
       Circed::Network::NetworkState.add_server_link("server1.irc", "server2.irc")
-      
+
       # Add users
       Circed::Network::NetworkState.add_user("alice", "alice", "server1.irc", "Alice", "server1.irc", 1)
       Circed::Network::NetworkState.add_user("bob", "bob", "server2.irc", "Bob", "server2.irc", 2)
-      
+
       # SQUIT server1 should remove both servers
       Circed::Commands::ServerCommands.squit(link_server, ["server1.irc", ":Network maintenance"])
-      
+
       Circed::Network::NetworkState.stats[:servers].should eq(0)
       Circed::Network::NetworkState.stats[:users].should eq(0)
     end
@@ -56,7 +56,7 @@ describe Circed::Commands::ServerCommands do
       link_server = create_link_server
       # Should not crash with empty parameters
       Circed::Commands::ServerCommands.squit(link_server, [] of String)
-      
+
       # Network state should be unchanged
       Circed::Network::NetworkState.stats[:servers].should eq(0)
     end
@@ -69,14 +69,14 @@ describe Circed::Commands::ServerCommands do
       Circed::Network::NetworkState.add_user("victim", "victim", "server.irc", "Victim User", "server.irc", 1)
       Circed::Network::NetworkState.add_channel("#test")
       Circed::Network::NetworkState.join_user_to_channel("victim", "#test")
-      
+
       # Initial state
       Circed::Network::NetworkState.get_user("victim").should_not be_nil
       Circed::Network::NetworkState.get_channel("#test").try(&.members.has_key?("victim")).should be_true
-      
+
       # Send KILL
       Circed::Commands::ServerCommands.kill(link_server, ["victim", ":Spam"])
-      
+
       # User should be removed
       Circed::Network::NetworkState.get_user("victim").should be_nil
       Circed::Network::NetworkState.get_channel("#test").try(&.members.has_key?("victim")).should be_false
@@ -96,17 +96,17 @@ describe Circed::Commands::ServerCommands do
       # Set up users
       Circed::Network::NetworkState.add_user("alice", "alice", "server.irc", "Alice", "server.irc", 1)
       Circed::Network::NetworkState.add_user("bob", "bob", "server.irc", "Bob", "server.irc", 1)
-      
+
       # Send NJOIN
       Circed::Commands::ServerCommands.njoin(link_server, ["#test", "+o", ":alice bob"])
-      
+
       # Channel should exist with both users
       channel = Circed::Network::NetworkState.get_channel("#test")
       channel.should_not be_nil
       channel.try(&.members.size).should eq(2)
       channel.try(&.members.has_key?("alice")).should be_true
       channel.try(&.members.has_key?("bob")).should be_true
-      
+
       # Users should have +o mode
       alice_modes = channel.try(&.members["alice"]?)
       alice_modes.should_not be_nil
@@ -126,7 +126,7 @@ describe Circed::Commands::ServerCommands do
       it "executes without crashing" do
         client = Circed::Client.new(DummySocket.new, [] of String)
         client.nickname = "testuser"
-        
+
         # Test all commands don't crash
         Circed::Commands::ServerCommands.links(client, ["*"])
         Circed::Commands::ServerCommands.stats(client, ["u"])

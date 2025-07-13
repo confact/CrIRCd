@@ -19,12 +19,12 @@ module Circed
       def remove(name : String) : Bool
         removed_server = @@servers.delete(name)
         @@topology.delete(name)
-        
+
         # Remove from other servers' topology
         @@topology.each do |_, connections|
           connections.delete(name)
         end
-        
+
         !removed_server.nil?
       end
 
@@ -66,20 +66,20 @@ module Circed
       def find_route_to_server(target : String, from : String = "localhost") : String?
         return nil if target == from
         return target if are_connected?(from, target)
-        
+
         # BFS to find route
         visited = Set(String).new
         queue = [{from, [from]}]
-        
+
         while !queue.empty?
           current_server, path = queue.shift
           next if visited.includes?(current_server)
           visited << current_server
-          
+
           if current_server == target
             return path.size > 1 ? path[1] : nil
           end
-          
+
           if connections = @@topology[current_server]?
             connections.each do |neighbor|
               next if visited.includes?(neighbor)
@@ -87,45 +87,45 @@ module Circed
             end
           end
         end
-        
+
         nil
       end
 
       def find_servers_behind(split_server : String, from : String = "localhost") : Array(String)
         return [] of String unless @@topology.has_key?(split_server)
-        
+
         disconnected = [] of String
-        
+
         @@servers.keys.each do |server_name|
           next if server_name == from || server_name == split_server
-          
+
           unless can_reach_without(server_name, split_server, from, Set(String).new)
             disconnected << server_name
           end
         end
-        
+
         disconnected
       end
 
       private def can_reach_without(target : String, avoid : String, source : String, visited : Set(String)) : Bool
         return true if target == source
         return false if visited.includes?(source) || source == avoid
-        
+
         visited << source
-        
+
         if connections = @@topology[source]?
           connections.each do |neighbor|
             next if neighbor == avoid || visited.includes?(neighbor)
             return true if can_reach_without(target, avoid, neighbor, visited.dup)
           end
         end
-        
+
         false
       end
 
       # Server management
-      def register_server(name : String, description : String, hopcount : Int32, 
-                         token : String? = nil, link_server : LinkServer? = nil) : Domain::Server
+      def register_server(name : String, description : String, hopcount : Int32,
+                          token : String? = nil, link_server : LinkServer? = nil) : Domain::Server
         server = Domain::Server.new(name, description, hopcount, token, link_server)
         add(name, server)
         server
@@ -180,13 +180,13 @@ module Circed
         total_users = @@servers.values.sum(&.user_count)
         local_servers = find_local_servers.size
         remote_servers = find_remote_servers.size
-        
+
         {
-          servers: size,
-          local_servers: local_servers,
+          servers:        size,
+          local_servers:  local_servers,
           remote_servers: remote_servers,
-          total_users: total_users,
-          connections: @@topology.values.sum(&.size) / 2 # Each connection counted twice
+          total_users:    total_users,
+          connections:    @@topology.values.sum(&.size) / 2, # Each connection counted twice
         }
       end
 

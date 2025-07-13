@@ -14,16 +14,16 @@ describe Circed::LinkServer do
     it "tracks authentication progress correctly" do
       # Test the authentication state logic indirectly
       # by verifying the overall authentication flow works
-      
+
       # Test that authentication state progresses correctly
       auth_complete = false
       auth_failed = false
-      
+
       # Simulate successful flow
       has_pass = true
       has_server = true
       password_valid = true
-      
+
       if has_pass && password_valid
         authenticated = true
         if has_server && authenticated
@@ -32,7 +32,7 @@ describe Circed::LinkServer do
       else
         auth_failed = true
       end
-      
+
       auth_complete.should be_true
       auth_failed.should be_false
     end
@@ -43,7 +43,7 @@ describe Circed::LinkServer do
         {has_pass: true, has_server: false, password_valid: true, expected: false},
         {has_pass: false, has_server: true, password_valid: true, expected: false},
         {has_pass: true, has_server: true, password_valid: false, expected: false},
-        {has_pass: true, has_server: true, password_valid: true, expected: true}
+        {has_pass: true, has_server: true, password_valid: true, expected: true},
       ]
 
       scenarios.each do |scenario|
@@ -54,7 +54,7 @@ describe Circed::LinkServer do
             auth_complete = true
           end
         end
-        
+
         auth_complete.should eq(scenario[:expected])
       end
     end
@@ -64,7 +64,7 @@ describe Circed::LinkServer do
     it "identifies server commands correctly" do
       # Test IRC command patterns that servers handle
       server_commands = ["ERROR", "PING", "PONG", "SERVER", "PRIVMSG", "JOIN", "PART", "QUIT", "NICK", "MODE"]
-      
+
       server_commands.each do |command|
         # Verify these are the commands the server handles
         command.should_not be_empty
@@ -76,10 +76,10 @@ describe Circed::LinkServer do
       # Test the logic for forwarding messages between servers
       servers = ["server1", "server2", "server3"]
       sender = "server1"
-      
+
       # Should forward to all servers except sender
       forward_to = servers.reject { |s| s == sender }
-      
+
       forward_to.should contain("server2")
       forward_to.should contain("server3")
       forward_to.should_not contain("server1")
@@ -91,15 +91,15 @@ describe Circed::LinkServer do
     it "validates connection state transitions" do
       # Test the connection state lifecycle
       states = [:initial, :authenticating, :authenticated, :established, :closed]
-      
+
       # Valid transitions
       valid_transitions = {
-        :initial => [:authenticating, :closed],
+        :initial        => [:authenticating, :closed],
         :authenticating => [:authenticated, :closed],
-        :authenticated => [:established, :closed],
-        :established => [:closed]
+        :authenticated  => [:established, :closed],
+        :established    => [:closed],
       }
-      
+
       valid_transitions.each do |from_state, to_states|
         to_states.each do |to_state|
           # These should be valid state transitions
@@ -114,12 +114,12 @@ describe Circed::LinkServer do
     it "follows IRC server protocol requirements" do
       # Test IRC protocol requirements for server connections
       required_commands = ["PASS", "SERVER"]
-      
+
       required_commands.each do |command|
         command.should_not be_empty
         command.size.should be > 0
       end
-      
+
       # Server names should not be empty
       server_name = "test.server.com"
       server_name.should_not be_empty
@@ -131,18 +131,18 @@ describe Circed::LinkServer do
       test_messages = [
         "PASS password123",
         "SERVER test.com 1 :Test IRC Server",
-        ":nick!user@host PRIVMSG #channel :Hello world"
+        ":nick!user@host PRIVMSG #channel :Hello world",
       ]
-      
+
       test_messages.each do |message|
         # Basic IRC message validation
         message.should_not be_empty
-        message.should_not start_with(" ")  # No leading spaces
-        
+        message.should_not start_with(" ") # No leading spaces
+
         # Should have command
         parts = message.split(' ', 2)
         command_part = parts[0]
-        
+
         if command_part.starts_with?(":")
           # Has prefix, command is next
           message_parts = message.split(' ', 3)

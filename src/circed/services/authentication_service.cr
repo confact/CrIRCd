@@ -11,7 +11,7 @@ module Circed
         case credentials
         when ServerCredentials
           authenticate_server(credentials)
-        when UserCredentials  
+        when UserCredentials
           authenticate_user(credentials)
         else
           Core::AuthenticationResult::Failed
@@ -68,7 +68,7 @@ module Circed
         return false unless nickname
         return false if nickname.empty?
         return false if nickname.size > 30
-        
+
         # IRC nickname rules: start with letter, contain letters/numbers/special chars
         nickname.matches?(/^[a-zA-Z][a-zA-Z0-9\-\[\]\\`^{}_]*$/)
       end
@@ -77,7 +77,7 @@ module Circed
         return false unless username
         return false if username.empty?
         return false if username.size > 32
-        
+
         # Username rules: no spaces or special IRC characters
         !username.includes?(' ') && !username.includes?('@') && !username.includes?('!')
       end
@@ -170,13 +170,13 @@ module Circed
       def complete_authentication(identifier : String, credentials : Core::AuthenticationCredentials) : Core::AuthenticationResult
         session = get_session(identifier)
         return Core::AuthenticationResult::Failed unless session
-        
+
         return Core::AuthenticationResult::Failed if session.expired?
         return Core::AuthenticationResult::Failed if session.too_many_attempts?
 
         session.record_attempt
         result = @service.authenticate(credentials)
-        
+
         if result == Core::AuthenticationResult::Success
           session.state = AuthenticationState::Completed
           session.credentials = credentials

@@ -34,16 +34,15 @@ module Circed
         @@channels.has_key?(name)
       end
 
-
       def join_user(channel_name : String, nickname : String, password : String? = nil) : Bool
         # Enhanced method that also validates password if needed
         channel = create_channel(channel_name)
-        
+
         # Password validation
         unless channel.password_matches?(password)
           return false
         end
-        
+
         channel.add_member(nickname)
         true
       end
@@ -55,7 +54,7 @@ module Circed
       # Channel-specific operations
       def create_channel(name : String) : Domain::Channel
         normalized_name = normalize_channel_name(name)
-        
+
         if existing = get(normalized_name)
           existing
         else
@@ -74,12 +73,12 @@ module Circed
       def part_user(channel_name : String, nickname : String) : Bool
         if channel = get(channel_name)
           removed = channel.remove_member(nickname)
-          
+
           # Remove empty channels
           if channel.is_empty?
             remove(channel_name)
           end
-          
+
           removed
         else
           false
@@ -187,41 +186,41 @@ module Circed
       # Bulk operations
       def remove_user_from_all_channels(nickname : String) : Array(String)
         affected_channels = Array(String).new
-        
+
         @@channels.each do |channel_name, channel|
           if channel.remove_member(nickname)
             affected_channels << channel_name
-            
+
             # Remove empty channels
             if channel.is_empty?
               remove(channel_name)
             end
           end
         end
-        
+
         affected_channels
       end
 
       def cleanup_empty_channels : Int32
         removed_count = 0
-        
+
         @@channels.select { |_, channel| channel.is_empty? }.each do |name, _|
           remove(name)
           removed_count += 1
         end
-        
+
         removed_count
       end
 
       # Statistics
       def statistics : Hash(Symbol, Int32)
         total_members = @@channels.values.sum(&.member_count)
-        
+
         {
-          total: size,
-          total_members: total_members,
+          total:           size,
+          total_members:   total_members,
           average_members: size > 0 ? (total_members / size) : 0,
-          empty: @@channels.values.count(&.is_empty?)
+          empty:           @@channels.values.count(&.is_empty?),
         }
       end
 

@@ -4,7 +4,7 @@ module Circed
     class Container
       # Use a union type to store service instances
       alias ServiceInstance = Repositories::UserRepository | Repositories::ChannelRepository | Repositories::ServerRepository | Services::AuthenticationService | Services::NotificationService | Services::IRCService
-      
+
       @@instances = Hash(String, ServiceInstance).new
 
       def self.register(type : T.class, instance : T) forall T

@@ -27,7 +27,7 @@ module Circed
           message_parts = [":#{user.hostmask} PART #{channel_name}"]
           message_parts << ":#{reason}" if reason
           message = message_parts.join(" ")
-          
+
           send_to_channel_members(channel_name, message)
         end
       end
@@ -37,7 +37,7 @@ module Circed
           message_parts = [":#{user.hostmask} QUIT"]
           message_parts << ":#{reason}" if reason
           message = message_parts.join(" ")
-          
+
           send_to_shared_channel_members(nickname, message)
         end
       end
@@ -61,7 +61,7 @@ module Circed
           message_parts = [":#{user.hostmask} MODE #{channel_name} #{modes}"]
           message_parts.concat(targets) unless targets.empty?
           message = message_parts.join(" ")
-          
+
           send_to_channel_members(channel_name, message)
         end
       end
@@ -71,7 +71,7 @@ module Circed
           message_parts = [":#{user.hostmask} KICK #{channel_name} #{kicked_user}"]
           message_parts << ":#{reason}" if reason
           message = message_parts.join(" ")
-          
+
           send_to_channel_members(channel_name, message)
         end
       end
@@ -79,7 +79,7 @@ module Circed
       def notify_invite(inviter : String, invited : String, channel_name : String)
         if user = @user_repository.get(inviter)
           message = ":#{user.hostmask} INVITE #{invited} #{channel_name}"
-          
+
           # Send to invited user if they're local
           if client = @user_repository.get_client(invited)
             client.send_message(message)
@@ -97,7 +97,7 @@ module Circed
       def notify_private_message(sender : String, target : String, message_text : String)
         if user = @user_repository.get(sender)
           message = ":#{user.hostmask} PRIVMSG #{target} :#{message_text}"
-          
+
           if client = @user_repository.get_client(target)
             client.send_message(message)
           end
@@ -114,7 +114,7 @@ module Circed
       def notify_server_message(server_name : String, message : String)
         # Send server notice to all local users
         server_message = ":#{server_name} NOTICE * :#{message}"
-        
+
         @user_repository.find_local_users.each do |user|
           if client = @user_repository.get_client(user.nickname)
             client.send_message(server_message)
@@ -129,13 +129,13 @@ module Circed
         send_to_local_channel_members(channel_name, message, nickname)
       end
 
-      def notify_remote_user_parted(nickname : String, username : String, hostname : String, 
-                                   channel_name : String, reason : String? = nil)
+      def notify_remote_user_parted(nickname : String, username : String, hostname : String,
+                                    channel_name : String, reason : String? = nil)
         hostmask = "#{nickname}!#{username}@#{hostname}"
         message_parts = [":#{hostmask} PART #{channel_name}"]
         message_parts << ":#{reason}" if reason
         message = message_parts.join(" ")
-        
+
         send_to_local_channel_members(channel_name, message)
       end
 
@@ -144,7 +144,7 @@ module Circed
         message_parts = [":#{hostmask} QUIT"]
         message_parts << ":#{reason}" if reason
         message = message_parts.join(" ")
-        
+
         send_to_local_shared_channel_members(nickname, message)
       end
 
@@ -161,7 +161,7 @@ module Circed
         if channel = @channel_repository.get(channel_name)
           channel.members.keys.each do |nickname|
             next if exclude_nickname && nickname == exclude_nickname
-            
+
             if client = @user_repository.get_client(nickname)
               client.send_message(message)
             end
@@ -174,10 +174,10 @@ module Circed
           local_members = channel.members.keys.select do |nickname|
             @user_repository.has_client?(nickname)
           end
-          
+
           local_members.each do |nickname|
             next if exclude_nickname && nickname == exclude_nickname
-            
+
             if client = @user_repository.get_client(nickname)
               client.send_message(message)
             end
@@ -189,12 +189,12 @@ module Circed
         # Find all channels the user was in and notify local members
         user_channels = @channel_repository.find_user_channels(nickname)
         notified_users = Set(String).new
-        
+
         user_channels.each do |channel|
           channel.members.keys.each do |member_nickname|
             next if notified_users.includes?(member_nickname)
             next unless @user_repository.has_client?(member_nickname)
-            
+
             if client = @user_repository.get_client(member_nickname)
               client.send_message(message)
               notified_users << member_nickname
@@ -208,14 +208,14 @@ module Circed
         affected_channels = @channel_repository.all.select do |channel|
           channel.has_member?(nickname)
         end
-        
+
         notified_users = Set(String).new
-        
+
         affected_channels.each do |channel|
           channel.members.keys.each do |member_nickname|
             next if notified_users.includes?(member_nickname)
             next unless @user_repository.has_client?(member_nickname)
-            
+
             if client = @user_repository.get_client(member_nickname)
               client.send_message(message)
               notified_users << member_nickname

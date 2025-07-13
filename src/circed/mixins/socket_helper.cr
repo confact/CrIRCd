@@ -2,7 +2,7 @@ module Circed
   module SocketHelper
     def safe_send(message : String) : Bool
       return false if closed?
-      
+
       begin
         result = socket.try(&.puts(message))
         !result.nil?

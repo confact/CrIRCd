@@ -49,4 +49,4 @@ module RepositoryHelper
   def get_test_channel(channel_name : String) : Circed::Domain::Channel?
     channel_repository.get(channel_name)
   end
-end 
+end

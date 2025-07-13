@@ -50,7 +50,7 @@ module Circed
 
     enum SourceType
       LocalClient
-      RemoteClient  
+      RemoteClient
       LocalServer
       RemoteServer
     end

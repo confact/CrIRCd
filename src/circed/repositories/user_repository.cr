@@ -48,17 +48,17 @@ module Circed
 
       def update_nickname(old_nickname : String, new_nickname : String) : Bool
         return false unless @@clients.has_key?(old_nickname)
-        
+
         client = @@clients[old_nickname]
         @@clients.delete(old_nickname)
         @@clients[new_nickname] = client
-        
+
         if user = @@users[old_nickname]?
           @@users.delete(old_nickname)
           user.nickname = new_nickname
           @@users[new_nickname] = user
         end
-        
+
         true
       end
 
@@ -91,12 +91,12 @@ module Circed
           user.nickname = new_nickname
           @@users[new_nickname] = user
           @@users.delete(old_nickname)
-          
+
           if client = @@clients[old_nickname]?
             @@clients[new_nickname] = client
             @@clients.delete(old_nickname)
           end
-          
+
           true
         else
           false
@@ -186,10 +186,10 @@ module Circed
       # Statistics
       def statistics : Hash(Symbol, Int32)
         {
-          total: size,
-          local: local_user_count,
+          total:  size,
+          local:  local_user_count,
           remote: remote_user_count,
-          away: @@users.values.count(&.is_away?)
+          away:   @@users.values.count(&.is_away?),
         }
       end
     end
