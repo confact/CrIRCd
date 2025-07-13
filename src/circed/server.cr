@@ -9,6 +9,11 @@ module Circed
     @@config_file : String = ARGV[0]? || "config.yml"
     class_getter config = Config.from_yaml(File.read(@@config_file))
     @@config_cache : String = File.read(@@config_file)
+    @@start_time : Time = Time.utc
+    
+    def self.start_time
+      @@start_time
+    end
 
     # @@servers
 

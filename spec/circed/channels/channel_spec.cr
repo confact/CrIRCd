@@ -24,7 +24,7 @@ describe Circed::Channel do
 
   it "should be able to add users to a channel" do
     channel = Circed::Channel.new("test")
-    client = Circed::Client.new(nil)
+    client = Circed::Client.new(nil, [] of String)
     channel.add_client(client)
     channel.channel_empty?.should be_false
     channel.user_in_channel?(client).should be_true
@@ -32,7 +32,7 @@ describe Circed::Channel do
 
   it "should be able to remove users from a channel" do
     channel = Circed::Channel.new("test")
-    client = Circed::Client.new(nil)
+    client = Circed::Client.new(nil, [] of String)
     channel.add_client(client)
     channel.channel_empty?.should be_false
     channel.user_in_channel?(client).should be_true
@@ -44,7 +44,7 @@ describe Circed::Channel do
   it "should be able to change mode" do
     channel = Circed::Channel.new("#test")
     channel.modes.should eq({} of String => String)
-    client = Circed::Client.new(nil)
+    client = Circed::Client.new(nil, [] of String)
     channel.add_client(client)
     channel.change_channel_mode(client, "+s")
     channel.modes.should eq({"s" => nil})
@@ -53,13 +53,13 @@ describe Circed::Channel do
   it "should not be able to change mode if not part of channel" do
     channel = Circed::Channel.new("test")
     channel.modes.should eq({} of String => String)
-    client = Circed::Client.new(nil)
+    client = Circed::Client.new(nil, [] of String)
     channel.change_channel_mode(client, "+s")
     channel.modes.should eq({} of String => String)
   end
 
   it "should be able to change topic if part of channel" do
-    client = Circed::Client.new(nil)
+    client = Circed::Client.new(nil, [] of String)
     Circed::ChannelHandler.add_user_to_channel("#test", client)
     channel = Circed::ChannelHandler.get_channel("#test")
     channel.try(&.topic).should eq("")
@@ -71,7 +71,7 @@ describe Circed::Channel do
   it "should not be able to change topic if not part of channel" do
     channel = Circed::Channel.new("#test")
     channel.topic.should eq("")
-    client = Circed::Client.new(nil)
+    client = Circed::Client.new(nil, [] of String)
     Circed::Actions::Topic.call(client, [channel.name, "test"])
     channel.topic.should eq("")
   end
@@ -79,9 +79,9 @@ describe Circed::Channel do
   it "should not be able to change topic if not operator" do
     channel = Circed::Channel.new("#test")
     channel.topic.should eq("")
-    client = Circed::Client.new(nil)
+    client = Circed::Client.new(nil, [] of String)
     channel.add_client(client)
-    client2 = Circed::Client.new(nil)
+    client2 = Circed::Client.new(nil, [] of String)
     channel.add_client(client2)
     Circed::Actions::Topic.call(client2, [channel.name, "test"])
     channel.topic.should eq("")

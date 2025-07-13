@@ -92,6 +92,12 @@ module Circed
       socket.try(&.puts(message + "\n"))
     end
 
+    def send_error(message)
+      Log.info { "Sending ERROR to #{@nickname}: #{message}" }
+      return if closed?
+      socket.try(&.puts("ERROR :#{message}\n"))
+    end
+
     def notice(message)
       send_message(":#{message}")
     end
