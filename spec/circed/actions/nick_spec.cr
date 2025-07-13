@@ -2,13 +2,11 @@ require "../../spec_helper"
 
 describe Circed::Actions::Nick do
   before_each do
-    Circed::UserHandler.clear
-    Circed::ChannelHandler.clear
+    clear_repositories
   end
 
   after_each do
-    Circed::UserHandler.clear
-    Circed::ChannelHandler.clear
+    clear_repositories
   end
 
   it "changes a user's nickname" do
@@ -18,8 +16,8 @@ describe Circed::Actions::Nick do
     Circed::Actions::Nick.call(sender, new_nickname)
 
     sender.nickname.should eq(new_nickname)
-    Circed::UserHandler.nickname_used?(new_nickname).should be_true
-    Circed::UserHandler.nickname_used?("Alice").should be_false
+    user_repository.has_client?(new_nickname).should be_true
+    user_repository.has_client?("Alice").should be_false
   end
 
   it "does not allow to change to an already used nickname" do
@@ -40,6 +38,6 @@ describe Circed::Actions::Nick do
     Circed::Actions::Nick.call(sender, new_nickname)
 
     sender.nickname.should eq(new_nickname)
-    Circed::UserHandler.nickname_used?(new_nickname).should be_true
+    user_repository.has_client?(new_nickname).should be_true
   end
 end

@@ -6,8 +6,10 @@ module Circed
       invited_user = receiver
       channel = message[1]
       if channel.starts_with?("#")
-        if ChannelHandler.channel_exists?(channel)
-          client = UserHandler.get_client(invited_user)
+        channel_repository = Infrastructure::ServiceLocator.channel_repository
+        if channel_repository.exists?(channel)
+          user_repository = Infrastructure::ServiceLocator.user_repository
+          client = user_repository.get_client(invited_user)
           if client
             send_to_user(client) do |_receiver, io|
               next if io.nil?

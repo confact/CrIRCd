@@ -249,7 +249,8 @@ module Circed
       end
 
       private def self.find_local_client(nickname : String) : Client?
-        UserHandler.get_client(nickname)
+        user_repository = Infrastructure::ServiceLocator.user_repository
+        user_repository.get_client(nickname)
       end
 
       private def self.find_server_connection(server_name : String) : LinkServer?
@@ -262,7 +263,8 @@ module Circed
         # Get all local users currently in the channel
         if channel = Network::NetworkState.get_channel(channel_name)
           local_users = channel.members.keys.select do |nick|
-            UserHandler.get_client(nick) # Only local users have client connections
+            user_repository = Infrastructure::ServiceLocator.user_repository
+            user_repository.get_client(nick) # Only local users have client connections
           end
           
           # Send JOIN messages to each local user for each remote user joining
@@ -272,7 +274,8 @@ module Circed
               
               # Send to all local users in the channel
               local_users.each do |local_nick|
-                if client = UserHandler.get_client(local_nick)
+                user_repository = Infrastructure::ServiceLocator.user_repository
+                if client = user_repository.get_client(local_nick)
                   client.send_message(join_message)
                 end
               end

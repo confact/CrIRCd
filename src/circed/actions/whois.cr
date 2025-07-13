@@ -3,7 +3,8 @@ module Circed
     extend Circed::ActionHelper
 
     def self.call(sender, target_nickname : String)
-      target = UserHandler.get_client(target_nickname)
+      user_repository = Infrastructure::ServiceLocator.user_repository
+      target = user_repository.get_client(target_nickname)
 
       if target.nil?
         send_error(sender, Numerics::ERR_NOSUCHNICK, target_nickname, "No such nick")
@@ -15,7 +16,7 @@ module Circed
       sender.send_message(Server.clean_name, Numerics::RPL_WHOISUSER, sender.nickname, target.nickname, user.try(&.name), target.host, "*", ":#{user.try(&.realname)}")
       sender.send_message(Server.clean_name, Numerics::RPL_WHOISSERVER, sender.nickname, target.nickname, Server.name, ":#{Server.config.host}")
 
-      channels_list = target.channels.map(&.name).join(" ")
+      channels_list = target.channels.map(&.name.as(String)).join(" ")
       sender.send_message(Server.clean_name, Numerics::RPL_WHOISCHANNELS, sender.nickname, target.nickname, ":#{channels_list}")
 
       idle_time_seconds = (Time.utc - target.last_activity).to_i

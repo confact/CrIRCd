@@ -10,7 +10,8 @@ module Circed
     class_getter config = Config.from_yaml(File.read(@@config_file))
     @@config_cache : String = File.read(@@config_file)
     @@start_time : Time = Time.utc
-    
+    @@container_initialized : Bool = false
+
     def self.start_time
       @@start_time
     end
@@ -18,11 +19,12 @@ module Circed
     # @@servers
 
     def self.start
+      initialize_container
       watch_config_file
       server = TCPServer.new(config.host, config.port)
       # @@address = server.local_address.to_s
       start_message
-      bootup_servers  # Connect to configured servers
+      bootup_servers # Connect to configured servers
       loop do
         if client = server.accept?
           # handle the client in a fiber
@@ -37,9 +39,9 @@ module Circed
 
     def self.handle_client(connection)
       buffer = [] of String
-      
+
       type = determine_connection_type(connection, buffer)
-      
+
       case type
       when :server
         handle_server_connection(connection, buffer)
@@ -59,13 +61,13 @@ module Circed
         connection_type = detect_connection_type(buffer)
         return connection_type if connection_type
       end
-      
+
       nil
     end
 
     def self.detect_connection_type(buffer) : Symbol?
       commands = extract_commands(buffer)
-      
+
       if commands.includes?("PASS") && commands.includes?("SERVER")
         :server
       elsif commands.includes?("NICK") && commands.includes?("USER")
@@ -76,11 +78,13 @@ module Circed
     end
 
     def self.extract_commands(buffer) : Set(String)
-      buffer.map { |line| line.split(' ', 2).first.upcase }.to_set
+      buffer.map(&.split(' ', 2).first.upcase).to_set
     end
 
     def self.handle_user_connection(client, buffer)
-      if UserHandler.size >= config.max_users
+      user_repo = Infrastructure::ServiceLocator.user_repository
+
+      if user_repo.count >= config.max_users
         Log.warn { "User limit reached, refusing new client: #{client.remote_address}" }
         client.puts "ERROR :Closing Link: #{client.remote_address} (Max users limit reached)"
         sleep 1.second
@@ -95,13 +99,11 @@ module Circed
     end
 
     def self.handle_server_connection(connection, buffer)
-      begin
-        server = Circed::LinkServer.new(connection, buffer)
-        Log.debug { "new server connected: #{server.name} from #{server.host}" }
-      rescue ex
-        Log.error { "Failed to establish server connection: #{ex.message}" }
-        connection.close
-      end
+      server = Circed::LinkServer.new(connection, buffer)
+      Log.debug { "new server connected: #{server.name} from #{server.host}" }
+    rescue ex
+      Log.error { "Failed to establish server connection: #{ex.message}" }
+      connection.close
     end
 
     def self.bootup_servers
@@ -110,9 +112,9 @@ module Circed
           begin
             Log.info { "Attempting to connect to server: #{linked_server.host}:#{linked_server.port}" }
             server = Circed::LinkServer.new(
-              linked_server.host, 
-              linked_server.host, 
-              linked_server.port, 
+              linked_server.host,
+              linked_server.host,
+              linked_server.port,
               linked_server.link_password
             )
             Log.info { "Successfully connected to server: #{linked_server.host}" }
@@ -130,7 +132,9 @@ module Circed
 
     def self.welcome_message(client : Client)
       nick = client.nickname.to_s
-      UserHandler.add_client(client)
+      user_repo = Infrastructure::ServiceLocator.user_repository
+      user_repo.add_client(client)
+
       Log.info { "Sends welcome to #{nick}" }
       client.send_message(clean_name, Numerics::RPL_WELCOME, nick, ":Welcome to the Internet Relay Network #{nick}!")
       client.send_message(clean_name, Numerics::RPL_YOURHOST, nick, ":Your host is #{@@config.host}, running version Circed #{VERSION}")
@@ -146,14 +150,17 @@ module Circed
 
     def self.lusers(client : Client)
       nick = client.nickname
+      user_repo = Infrastructure::ServiceLocator.user_repository
+      channel_repo = Infrastructure::ServiceLocator.channel_repository
+
       data = ""
-      data += Format.format_server_message(name, Numerics::RPL_LUSERCLIENT, nick, ":There are #{UserHandler.size} users and 0 invisible on 1 server(s)")
+      data += Format.format_server_message(name, Numerics::RPL_LUSERCLIENT, nick, ":There are #{user_repo.count} users and 0 invisible on 1 server(s)")
       data += Format.format_server_message(name, Numerics::RPL_LUSEROP, nick, ":1 IRC Operators online")
       data += Format.format_server_message(name, Numerics::RPL_LUSERUNKNOWN, nick, ":0 unregistered connections")
-      data += Format.format_server_message(name, Numerics::RPL_LUSERCHANNELS, nick, ":#{ChannelHandler.size} channels formed")
-      data += Format.format_server_message(name, Numerics::RPL_LUSERME, nick, ":I have #{UserHandler.size} clients and 1 servers")
-      data += Format.format_server_message(name, Numerics::RPL_LOCALUSERS, nick, UserHandler.size, config.max_users, ":Current local users #{UserHandler.size}, max #{config.max_users}")
-      data += Format.format_server_message(name, Numerics::RPL_GLOBALUSERS, nick, UserHandler.size, config.max_users, ":Current global users #{UserHandler.size}, max #{config.max_users}")
+      data += Format.format_server_message(name, Numerics::RPL_LUSERCHANNELS, nick, ":#{channel_repo.count} channels formed")
+      data += Format.format_server_message(name, Numerics::RPL_LUSERME, nick, ":I have #{user_repo.count} clients and 1 servers")
+      data += Format.format_server_message(name, Numerics::RPL_LOCALUSERS, nick, user_repo.count, config.max_users, ":Current local users #{user_repo.count}, max #{config.max_users}")
+      data += Format.format_server_message(name, Numerics::RPL_GLOBALUSERS, nick, user_repo.count, config.max_users, ":Current global users #{user_repo.count}, max #{config.max_users}")
       data
     end
 
@@ -202,6 +209,13 @@ module Circed
           end
         end
       end
+    end
+
+    private def self.initialize_container
+      return if @@container_initialized
+      Infrastructure::Container.setup_default_services(config)
+      @@container_initialized = true
+      Log.info { "Dependency injection container initialized" }
     end
   end
 end

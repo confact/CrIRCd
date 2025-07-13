@@ -2,63 +2,68 @@ require "../../spec_helper"
 
 describe Circed::Actions::Join do
   before_each do
-    Circed::UserHandler.clear
-    Circed::ChannelHandler.clear
+    clear_repositories
   end
 
   after_each do
-    Circed::UserHandler.clear
-    Circed::ChannelHandler.clear
+    clear_repositories
   end
 
   it "joins a user to a channel" do
     sender = create_test_client("Alice")
     channel_name = "#test"
-    channel = Circed::Channel.new(channel_name)
-    Circed::ChannelHandler.add_channel(channel)
 
     Circed::Actions::Join.call(sender, channel_name)
 
-    channel.user_in_channel?(sender).should be_true
+    # Check that user is in channel
+    user_in_channel?(channel_name, "Alice").should be_true
+
+    # Check domain channel directly
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    channel.not_nil!.has_member?("Alice").should be_true
   end
 
   it "does not join a user to a private channel" do
     sender = create_test_client("Alice")
     channel_name = "#private"
-    channel = Circed::Channel.new(channel_name)
-    channel.add_mode("i") # Make the channel invite-only
-    Circed::ChannelHandler.add_channel(channel)
+
+    # Create invite-only channel
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.modes << 'i' # Make invite-only
 
     Circed::Actions::Join.call(sender, channel_name)
 
-    channel.user_in_channel?(sender).should be_false
+    user_in_channel?(channel_name, "Alice").should be_false
   end
 
   it "joins a user to a password-protected channel with correct password" do
     sender = create_test_client("Alice")
     channel_name = "#protected"
-    channel = Circed::Channel.new(channel_name)
-    channel.add_mode("k", "secret")
-    Circed::ChannelHandler.add_channel(channel)
+
+    # Create password-protected channel
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.set_password("secret")
 
     Circed::Actions::Join.call(sender, channel_name, "secret")
 
-    channel.user_in_channel?(sender).should be_true
+    user_in_channel?(channel_name, "Alice").should be_true
   end
 
   it "does not join a user to a password-protected channel with incorrect password" do
     sender = create_test_client("Alice")
     channel_name = "#protected"
-    channel = Circed::Channel.new(channel_name)
-    channel.add_mode("k", "secret")
 
-    Circed::ChannelHandler.add_channel(channel)
+    # Create password-protected channel
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.set_password("secret")
 
-    channel.user_in_channel?(sender).should be_false
-    channel.channel_password.should eq("secret")
+    # Initially not in channel
+    user_in_channel?(channel_name, "Alice").should be_false
 
     Circed::Actions::Join.call(sender, channel_name, "wrong")
 
-    channel.user_in_channel?(sender).should be_false
+    # Should still not be in channel due to password validation
+    user_in_channel?(channel_name, "Alice").should be_false
   end
 end

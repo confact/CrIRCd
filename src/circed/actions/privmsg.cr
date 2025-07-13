@@ -4,7 +4,8 @@ module Circed
 
     def self.call(sender, receiver, message : Array(String))
       if receiver.starts_with?("#")
-        channel = ChannelHandler.get_channel(receiver)
+        channel_repository = Infrastructure::ServiceLocator.channel_repository
+        channel = channel_repository.get(receiver)
         if channel
           sender.update_activity
           send_to_channel(channel) do |_receiver, io|
@@ -16,7 +17,8 @@ module Circed
           send_error(sender, Numerics::ERR_NOSUCHCHANNEL, "No such channel")
         end
       else
-        client = UserHandler.get_client(receiver)
+        user_repository = Infrastructure::ServiceLocator.user_repository
+        client = user_repository.get_client(receiver)
         if client
           sender.update_activity
           send_to_user(receiver) do |_receiver, io|

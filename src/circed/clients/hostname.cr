@@ -3,7 +3,7 @@ require "durian"
 module Circed
   class Hostname
     GOOGLE_DNS_SERVER = "8.8.8.8"
-    GOOGLE_DNS_PORT = 53_i32
+    GOOGLE_DNS_PORT   = 53_i32
 
     def self.get_hostname(ip_address : String) : String
       return ip_address if {"localhost", "::1", "127.0.0.1"}.includes?(ip_address)
@@ -22,7 +22,7 @@ module Circed
         length, _ = udp_socket.receive buffer.to_slice
         response = Durian::Packet.from_io(Durian::Protocol::UDP, IO::Memory.new(buffer.to_slice[0_i32, length]))
         resource_record = response.try(&.answers).try(&.first?).try(&.resourceRecord)
-        
+
         if resource_record.is_a?(Durian::Record::PTR)
           return resource_record.domainName
         end
@@ -41,7 +41,7 @@ module Circed
     end
 
     def self.ip_to_reverse_dns(ip_address : String) : String
-      ip_address.split(".").reverse.join(".") + ".in-addr.arpa"
+      ip_address.split(".").reverse!.join(".") + ".in-addr.arpa"
     end
   end
 end

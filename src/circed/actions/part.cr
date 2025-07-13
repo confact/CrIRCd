@@ -2,24 +2,17 @@ module Circed
   class Actions::Part
     extend Circed::ActionHelper
 
-    def self.call(sender, channel : String)
+    def self.call(sender, channel : String, reason : String? = nil)
       channels = channel.split(",")
+      irc_service = Infrastructure::ServiceLocator.irc_service
+
       channels.each do |ch|
         ch = ch.strip
-        if ch.empty?
-          send_error(sender, Numerics::ERR_NOSUCHCHANNEL, ch, "No such channel")
-          next
-        end
-        if !ChannelHandler.channel_exists?(ch)
-          send_error(sender, Numerics::ERR_NOSUCHCHANNEL, ch, "No such channel")
-          next
-        end
-        if !ChannelHandler.user_in_channel?(ch, sender)
-          send_error(sender, Numerics::ERR_NOTONCHANNEL, ch, "User is not in channel")
-          next
-        end
-        ChannelHandler.remove_user_from_channel(ch, sender)
-        # send_message(Server.clean_name, "PART", channel)
+
+        next if ch.empty?
+
+        # Use IRC service for parting with full validation
+        irc_service.part_channel(sender, ch, reason)
       end
     end
   end

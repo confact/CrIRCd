@@ -46,7 +46,7 @@ module Circed
       @last_ping = @last_pong
     end
 
-    private def handle_heartbeat(type : String, last_time : Time?)
+    private def handle_heartbeat(type : String, last_time : Time?, &)
       if last_time.nil? || last_time < 5.seconds.ago
         Log.debug { "#{type} #{nickname}" }
         yield

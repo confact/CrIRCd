@@ -3,17 +3,23 @@ module Circed
     extend Circed::ActionHelper
 
     def self.call(sender, new_nickname : String)
-      if UserHandler.nickname_used?(new_nickname)
+      user_repository = Infrastructure::ServiceLocator.user_repository
+
+      if user_repository.has_client?(new_nickname)
         send_error(sender, Numerics::ERR_NICKNAMEINUSE, new_nickname, "Nickname is already in used")
         return
       end
+
       changed = !sender.nickname.to_s.empty?
       old_nickname = sender.nickname.to_s
 
       if changed
         begin
           Log.debug { "changing nickname to: #{new_nickname} " }
-          UserHandler.changed_nickname(old_nickname.to_s, new_nickname)
+          unless user_repository.get_client(old_nickname)
+            raise Exception.new("Nickname not found in repository")
+          end
+          user_repository.update_nickname(old_nickname, new_nickname)
           send_to_user(sender) do |_receiver, io|
             parse(sender, [new_nickname], io) if io
           end
@@ -24,7 +30,7 @@ module Circed
           sender.nickname = new_nickname
         rescue e : Exception
           Log.debug { "error, nickname is not used: #{old_nickname} " }
-          UserHandler.changed_nickname(new_nickname, old_nickname.to_s)
+          user_repository.update_nickname(new_nickname, old_nickname) if user_repository.get_client(new_nickname)
           sender.nickname = old_nickname
           send_error(sender, Numerics::ERR_ERRONEUSNICKNAME, old_nickname, "Nickname is not used.")
         end

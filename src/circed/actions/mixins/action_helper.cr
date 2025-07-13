@@ -26,36 +26,47 @@ module Circed
       FastIRC::Message.new(command, [receiver, message], prefix: prefix).to_s(io)
     end
 
-    def send_to_channel(channel : String, &block)
-      channel = ChannelHandler.get_channel(channel)
-      Log.debug { "Sending to channel #{channel.name}" }
-      channel.users.each do |user|
-        yield user.client, user.client.socket if user.client.try(&.socket)
+    def send_to_channel(channel_name : String, &block)
+      channel_repository = Infrastructure::ServiceLocator.channel_repository
+      if channel = channel_repository.get(channel_name)
+        send_to_channel(channel, &block)
       end
     end
 
-    def send_to_channel(channel : Channel, &block)
+    def send_to_channel(channel : Domain::Channel, &)
       Log.debug { "Sending to channel #{channel.name}" }
-      channel.users.each do |user|
-        yield user.client, user.client.socket if user.client.try(&.socket)
-      end
-    end
+      user_repo = Infrastructure::ServiceLocator.user_repository
 
-    def send_to_user_channel(user : Client, &block)
-      channels = ChannelHandler.user_channels(user)
-      channels.each do |channel|
-        channel.users.each do |channel_user|
-          yield channel_user.client, channel_user.client.socket if channel_user.client.try(&.socket)
+      channel.members.keys.each do |nickname|
+        if client = user_repo.get_client(nickname)
+          yield client, client.socket if client.socket
         end
       end
     end
 
-    def send_to_user(user_name : String, &block)
-      client = UserHandler.get_client(user_name)
+    def send_to_user_channel(user : Client, &)
+      return unless nickname = user.nickname
+
+      channel_repository = Infrastructure::ServiceLocator.channel_repository
+      channels = channel_repository.find_user_channels(nickname)
+      user_repo = Infrastructure::ServiceLocator.user_repository
+
+      channels.each do |channel|
+        channel.members.keys.each do |member_nickname|
+          if client = user_repo.get_client(member_nickname)
+            yield client, client.socket if client.socket
+          end
+        end
+      end
+    end
+
+    def send_to_user(user_name : String, &)
+      user_repository = Infrastructure::ServiceLocator.user_repository
+      client = user_repository.get_client(user_name)
       yield client, client.try(&.socket) if client.try(&.socket)
     end
 
-    def send_to_user(user : Client, &block)
+    def send_to_user(user : Client, &)
       yield user, user.try(&.socket) if user.try(&.socket)
     end
 

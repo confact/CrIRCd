@@ -108,9 +108,10 @@ module Circed
 
       private def self.send_quit_to_local_users(nickname : String, user_info : UserInfo, server_name : String)
         # Find all channels the user was in before being removed
+        user_repository = Infrastructure::ServiceLocator.user_repository
         affected_channels = @@channels.select do |_, channel|
           # Check if any local users are in channels (since remote user is already removed)
-          channel.members.keys.any? { |nick| UserHandler.get_client(nick) }
+          channel.members.keys.any? { |nick| user_repository.get_client(nick) }
         end
         
         # Create netsplit quit message
@@ -124,9 +125,9 @@ module Circed
         affected_channels.each do |channel_name, channel|
           channel.members.keys.each do |local_nick|
             next if local_users_notified.includes?(local_nick)
-            next unless UserHandler.get_client(local_nick)
+            next unless user_repository.get_client(local_nick)
             
-            if client = UserHandler.get_client(local_nick)
+            if client = user_repository.get_client(local_nick)
               client.send_message(quit_message)
               local_users_notified << local_nick
             end

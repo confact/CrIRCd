@@ -7,29 +7,21 @@ module Circed
 
       user_or_channel = message.first
       if user_or_channel.starts_with?("#")
-        channel = ChannelHandler.get_channel(user_or_channel)
-        if channel
-          if message.size > 1 && (message[1].starts_with?("+") || message[1].starts_with?("-"))
-            # channel mode
-            target_nick = message[2]?
-            channel.change_channel_mode(sender, message[1], target_nick)
-          else
-            # user mode
-            if message.size > 1
-              target_nick = message[1]
-              channel.change_user_mode(sender, target_nick, message[2..-1].join)
-            end
-          end
+        if message.size > 1 && (message[1].starts_with?("+") || message[1].starts_with?("-"))
+          # channel mode
+          target_nick = message[2]?
+          mode_string = message[1]
+
+          irc_service = Infrastructure::ServiceLocator.irc_service
+          # Use IRC service for mode changes with full validation
+          irc_service.change_mode(sender, user_or_channel, mode_string, target_nick)
         else
-          send_error(sender, Numerics::ERR_NOSUCHCHANNEL, user_or_channel, "No such channel")
+          # user mode in channel - not implemented
+          Log.info { "User mode in channel not implemented" }
         end
       else
-        client = UserHandler.get_client(user_or_channel)
-        if client
-          # client.not_nil!.mode(self, message[1..-1].join)
-        else
-          send_error(sender, Numerics::ERR_NOSUCHNICK, user_or_channel, "No such nick")
-        end
+        # User mode changes - not implemented
+        Log.info { "User mode changes not implemented" }
       end
     end
   end

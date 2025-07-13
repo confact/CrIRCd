@@ -15,7 +15,7 @@ class DummySocket < IPSocket
 
   def gets(delimiter = '\n', limit : Int32 = 0) : String?
     return nil if @closed || @current_index >= @receive_data.size
-    
+
     line = @receive_data[@current_index]
     @current_index += 1
     line.chomp
@@ -32,7 +32,7 @@ class DummySocket < IPSocket
   def puts(data : String)
     # Mock implementation - could store sent data if needed for testing
     return if @closed
-    data.size  # Return something truthy like real socket puts
+    data.size # Return something truthy like real socket puts
   end
 
   def close

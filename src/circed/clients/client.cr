@@ -32,7 +32,7 @@ module Circed
     def message_handling
       return unless socket
 
-      #go through buffer first
+      # go through buffer first
       @buffer.each do |buff|
         begin
           payload = FastIRC.parse_line(buff)
@@ -42,26 +42,30 @@ module Circed
         end
       end
 
-      while !socket.not_nil!.closed? 
+      while !socket.not_nil!.closed?
         FastIRC.parse(socket.not_nil!) do |payload|
           run_commands(payload)
         end
 
         if closed?
-          UserHandler.remove_connection(nickname.to_s) unless nickname.to_s.empty?
+          user_repository = Infrastructure::ServiceLocator.user_repository
+          user_repository.remove_client(nickname.to_s) unless nickname.to_s.empty?
           break
         end
       end
     rescue e : IO::Error
       Log.warn(exception: e) { "IO Error" }
       shutdown
-      UserHandler.remove_connection(nickname.to_s) unless nickname.to_s.empty?
+      user_repository = Infrastructure::ServiceLocator.user_repository
+      user_repository.remove_client(nickname.to_s) unless nickname.to_s.empty?
     rescue e : Circed::ClosedClient
-      UserHandler.remove_connection(nickname.to_s) unless nickname.to_s.empty?
+      user_repository = Infrastructure::ServiceLocator.user_repository
+      user_repository.remove_client(nickname.to_s) unless nickname.to_s.empty?
     rescue e : Exception
       Log.error(exception: e) { "Error" }
       shutdown
-      UserHandler.remove_connection(nickname.to_s) unless nickname.to_s.empty?
+      user_repository = Infrastructure::ServiceLocator.user_repository
+      user_repository.remove_client(nickname.to_s) unless nickname.to_s.empty?
     end
 
     def set_user(users_messages : Array(String))
@@ -153,11 +157,20 @@ module Circed
     end
 
     def channels
-      ChannelHandler.user_channels(self)
+      return [] of Domain::Channel unless nickname = self.nickname
+      channel_repository = Infrastructure::ServiceLocator.channel_repository
+      channel_repository.find_user_channels(nickname)
     end
 
     def shutdown
-      ChannelHandler.remove_user_from_all_channels(self)
+      if nickname = self.nickname
+        channel_repository = Infrastructure::ServiceLocator.channel_repository
+        affected_channels = channel_repository.remove_user_from_all_channels(nickname)
+        notification_service = Infrastructure::ServiceLocator.notification_service
+        affected_channels.each do |channel_name|
+          notification_service.notify_user_parted(nickname, channel_name)
+        end
+      end
       if @pingpong
         @pingpong.try(&.stop_ping)
         @pingpong.try(&.stop_pong_check)
@@ -218,7 +231,7 @@ module Circed
     end
 
     private def log_closed_socket_and_exit
-     Log.debug { "Socket is closed, can't send message" }
+      Log.debug { "Socket is closed, can't send message" }
     end
   end
 end
