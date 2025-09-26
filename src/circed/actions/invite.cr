@@ -1,14 +1,14 @@
-module Circed
-  class Actions::Invite
-    extend Circed::ActionHelper
+require "./base_action"
 
-    def self.call(sender, receiver, message)
+module Circed
+  class Actions::Invite < Actions::ChannelAction
+    protected def self.execute_action(sender : Client, receiver : String, message : Array(String)) : Nil
       invited_user = receiver
       channel = message[1]
       if channel.starts_with?("#")
-        channel_repository = Infrastructure::ServiceLocator.channel_repository
+        channel_repository = get_channel_repository
         if channel_repository.exists?(channel)
-          user_repository = Infrastructure::ServiceLocator.user_repository
+          user_repository = get_user_repository
           client = user_repository.get_client(invited_user)
           if client
             send_to_user(client) do |_receiver, io|
@@ -20,13 +20,13 @@ module Circed
               parse(sender, message, io)
             end
           else
-            send_error(sender, Numerics::ERR_NOSUCHNICK, invited_user, "No such nick")
+            Utils::IrcUtils.send_no_such_nick_error(sender, invited_user)
           end
         else
-          send_error(sender, Numerics::ERR_NOSUCHCHANNEL, channel, "No such channel")
+          Utils::IrcUtils.send_no_such_channel_error(sender, channel)
         end
       else
-        send_error(sender, Numerics::ERR_BADCHANMASK, channel, "Wrong channel format")
+        Utils::IrcUtils.send_channel_error(sender, channel)
       end
     end
   end

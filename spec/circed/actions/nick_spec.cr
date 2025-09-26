@@ -22,7 +22,7 @@ describe Circed::Actions::Nick do
 
   it "does not allow to change to an already used nickname" do
     sender = create_test_client("Alice")
-    other_user = create_test_client("Bob")
+    other_user = create_test_client("Bob")  # Create user with nickname "Bob" to make it unavailable
     new_nickname = "Bob"
 
     Circed::Actions::Nick.call(sender, new_nickname)

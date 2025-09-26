@@ -1,24 +1,10 @@
+require "./base_action"
+
 module Circed
-  class Actions::Join
-    extend Circed::ActionHelper
-
-    def self.call(sender, channel : String, password : String? = nil)
-      channels = channel.split(",")
+  class Actions::Join < Actions::ChannelAction
+    protected def self.execute_action(sender : Client, channel_name : String, password : String? = nil) : Nil
       irc_service = Infrastructure::ServiceLocator.irc_service
-
-      channels.each do |ch|
-        ch = ch.strip
-
-        if ch.empty?
-          send_error(sender, Numerics::ERR_NOSUCHCHANNEL, ch, "No such channel")
-          next
-        end
-
-        # Use IRC service for validation and joining
-        unless irc_service.join_channel(sender, ch, password)
-          # IRCService handles all validation internally and sends appropriate errors
-        end
-      end
+      irc_service.join_channel(sender, channel_name, password)
     end
   end
 end

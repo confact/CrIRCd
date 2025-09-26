@@ -54,14 +54,44 @@ module Circed
     end
 
     private def self.determine_connection_type(connection, buffer)
+      start_time = Time.utc
+      timeout = 10.seconds  # 10 second timeout
+      
+      # Read all available commands with a small delay to allow for multiple commands
       loop do
-        message = connection.gets.try(&.strip) || break
+        # Check for timeout
+        if Time.utc - start_time > timeout
+          Log.warn { "Connection type determination timed out" }
+          return nil
+        end
+        
+        # Try to read a command
+        message = connection.gets.try(&.strip)
+        break unless message
+        
         buffer << message
-
+        Log.debug { "Read command: #{message}" }
+        
+        # Check if we have enough information to determine type
         connection_type = detect_connection_type(buffer)
-        return connection_type if connection_type
+        if connection_type
+          Log.debug { "Connection type determined: #{connection_type}" }
+          return connection_type
+        end
+        
+        # If we don't have enough info yet, wait a bit for more commands
+        # This allows for commands that might be sent with small delays
+        sleep(0.1.seconds)
       end
 
+      # If we've read some commands but couldn't determine type, 
+      # assume it's a client if we have any client-like commands
+      if buffer.any? { |cmd| cmd.upcase.starts_with?("NICK") || cmd.upcase.starts_with?("USER") }
+        Log.debug { "Assuming client connection based on partial commands" }
+        return :client
+      end
+
+      Log.warn { "Could not determine connection type, buffer: #{buffer}" }
       nil
     end
 
@@ -70,7 +100,9 @@ module Circed
 
       if commands.includes?("PASS") && commands.includes?("SERVER")
         :server
-      elsif commands.includes?("NICK") && commands.includes?("USER")
+      elsif commands.includes?("NICK") || commands.includes?("USER") || commands.includes?("CAP")
+        # If we see NICK, USER, or CAP, it's likely a client
+        # We'll let the client handling deal with missing commands
         :client
       else
         nil
@@ -111,7 +143,7 @@ module Circed
         spawn do
           begin
             Log.info { "Attempting to connect to server: #{linked_server.host}:#{linked_server.port}" }
-            server = Circed::LinkServer.new(
+            Circed::LinkServer.new(
               linked_server.host,
               linked_server.host,
               linked_server.port,
@@ -131,21 +163,14 @@ module Circed
     end
 
     def self.welcome_message(client : Client)
-      nick = client.nickname.to_s
-      user_repo = Infrastructure::ServiceLocator.user_repository
-      user_repo.add_client(client)
+      client.send_message(Server.clean_name, Numerics::RPL_WELCOME, client.nickname, ":Welcome to the #{Server.config.network} IRC Network, #{client.nickname}!")
+      client.send_message(Server.clean_name, Numerics::RPL_YOURHOST, client.nickname, ":Your host is #{Server.config.host}, running version #{VERSION}")
+      client.send_message(Server.clean_name, Numerics::RPL_CREATED, client.nickname, ":This server was created on #{Server.start_time}")
+      client.send_message(Server.clean_name, Numerics::RPL_MYINFO, client.nickname, "#{Server.config.host} #{VERSION} oiwszcrkfydnxbauglZCD biklmnopstvrDdRcC bkloveqjfI")
 
-      Log.info { "Sends welcome to #{nick}" }
-      client.send_message(clean_name, Numerics::RPL_WELCOME, nick, ":Welcome to the Internet Relay Network #{nick}!")
-      client.send_message(clean_name, Numerics::RPL_YOURHOST, nick, ":Your host is #{@@config.host}, running version Circed #{VERSION}")
-      client.send_message(clean_name, Numerics::RPL_CREATED, nick, ":This server was created #{Server.created}")
-      client.send_message(clean_name, Numerics::RPL_MYINFO, nick, "#{Server.name} #{config.network}", "Circed", "o o o")
-      client.send_message(clean_name, Numerics::RPL_ISUPPORT, nick, ":CASEMAPPING=ascii", "are supported by this server")
-      client.send_message(clean_name, Numerics::RPL_ISUPPORT, nick, ":PREFIX=(ohv)@%+", "are supported by this server")
-      data = ""
-      data += lusers(client)
-      data += motd(client)
-      client.send_message(data)
+      # Sync new user with network state
+      irc_service = Infrastructure::ServiceLocator.irc_service
+      irc_service.sync_new_user(client)
     end
 
     def self.lusers(client : Client)

@@ -113,11 +113,11 @@ describe "Server Authentication Flow" do
         it "requires both NICK and USER commands" do
           buffer_nick_only = ["NICK testuser"]
           type = Circed::Server.detect_connection_type(buffer_nick_only)
-          type.should be_nil
+          type.should eq(:client)  # Now accepts single commands
 
           buffer_user_only = ["USER test test localhost :Test"]
           type = Circed::Server.detect_connection_type(buffer_user_only)
-          type.should be_nil
+          type.should eq(:client)  # Now accepts single commands
         end
 
         it "detects client type with additional commands" do
@@ -127,6 +127,18 @@ describe "Server Authentication Flow" do
             "JOIN #test",
             "PRIVMSG #test :Hello",
           ]
+          type = Circed::Server.detect_connection_type(buffer)
+          type.should eq(:client)
+        end
+
+        it "detects client connection with CAP commands" do
+          buffer = ["CAP LS", "CAP REQ :multi-prefix", "CAP END"]
+          type = Circed::Server.detect_connection_type(buffer)
+          type.should eq(:client)
+        end
+
+        it "detects client connection with single CAP command" do
+          buffer = ["CAP LS"]
           type = Circed::Server.detect_connection_type(buffer)
           type.should eq(:client)
         end
@@ -163,7 +175,7 @@ describe "Server Authentication Flow" do
     it "validates password format" do
       # Test various password scenarios
       valid_passwords = ["secret123", "complex!password@123", "simple"]
-      invalid_passwords = ["", "   ", nil]
+      # invalid_passwords = ["", "   ", nil]  # Removed unused variable
 
       valid_passwords.each do |password|
         # Password should be accepted (assuming it matches config)

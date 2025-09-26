@@ -6,7 +6,7 @@ class DummySocket < IPSocket
   @closed : Bool = false
 
   def initialize
-    super(Socket::Family::INET, Socket::Type::STREAM, Socket::Protocol::TCP, 0)
+    super(Socket::Family::INET, Socket::Type::STREAM, Socket::Protocol::TCP, blocking: false)
   end
 
   def add_receive_data(data : String)

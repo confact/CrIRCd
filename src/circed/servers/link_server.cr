@@ -1,6 +1,8 @@
+require "../mixins/unified_messaging"
+
 module Circed
   class LinkServer
-    include SocketHelper
+    include UnifiedMessaging
 
     getter name : String
     getter target_host : String
@@ -10,16 +12,11 @@ module Circed
 
     @pingpong : Pingpong?
 
-    @buffer : Array(String) = [] of String
+    @buffer = [] of String
 
-    def initialize(name, target_host, target_port, password)
-      @name = name
-      @target_host = target_host
-      @target_port = target_port
-
+    def initialize(@name : String, @target_host : String, @target_port : Int32, password : String)
       @socket = TCPSocket.new(@target_host, @target_port)
       handshake(password)
-
       listen
     end
 
@@ -35,7 +32,7 @@ module Circed
       listen
     end
 
-    def handshake(password)
+    def handshake(password : String) : Nil
       # IRC server handshake protocol
       # Send PASS command for authentication
       safe_send("PASS #{password}")
@@ -58,18 +55,16 @@ module Circed
       complete_authentication(auth_state)
     end
 
-    private def process_authentication_line(line, auth_state)
-      begin
-        payload = FastIRC.parse_line(line)
-        case payload.command
-        when "PASS"
-          process_pass_command(payload, auth_state)
-        when "SERVER"
-          process_server_command(payload, auth_state)
-        end
-      rescue ex
-        Log.warn { "Failed to parse IRC line during authentication: #{line} - #{ex.message}" }
+    private def process_authentication_line(line : String, auth_state : AuthenticationState) : Nil
+      payload = FastIRC.parse_line(line)
+      case payload.command
+      when "PASS"
+        process_pass_command(payload, auth_state)
+      when "SERVER"
+        process_server_command(payload, auth_state)
       end
+    rescue ex
+      Log.warn { "Failed to parse IRC line during authentication: #{line} - #{ex.message}" }
     end
 
     private def process_pass_command(payload, auth_state)
@@ -85,7 +80,7 @@ module Circed
     end
 
     private def process_server_command(payload, auth_state)
-      unless auth_state.authenticated
+      unless auth_state.authenticated?
         Log.error { "Server tried to introduce without authentication: #{@target_host}" }
         send_error("Not authenticated")
         auth_state.failed = true
@@ -111,22 +106,20 @@ module Circed
     end
 
     private class AuthenticationState
-      property authenticated : Bool = false
-      property server_introduced : Bool = false
-      property failed : Bool = false
+      property? authenticated : Bool = false
+      property? server_introduced : Bool = false
+      property? failed : Bool = false
 
       def complete?
-        authenticated && server_introduced
-      end
-
-      def failed?
-        failed
+        authenticated? && server_introduced?
       end
     end
 
-    def listen
-      while !socket.not_nil!.closed?
-        FastIRC.parse(socket.not_nil!) do |payload|
+    def listen : Nil
+      return unless socket_ref = socket
+
+      until socket_ref.closed?
+        FastIRC.parse(socket_ref) do |payload|
           dispatch_command(payload)
         end
 
@@ -219,7 +212,7 @@ module Circed
         Network::NetworkState.add_user(new_nick, user.username, user.hostname, user.realname, user.server, user.hopcount)
 
         # Update channel memberships
-        Network::NetworkState.channels.each do |channel_name, channel|
+        Network::NetworkState.channels.each do |_, channel|
           if channel.members.has_key?(old_nick)
             modes = channel.members.delete(old_nick)
             channel.members[new_nick] = modes if modes
@@ -303,15 +296,16 @@ module Circed
       Log.debug { "Away status change for #{nickname}" }
     end
 
-    private def forward_message_to_peers(payload)
+    private def forward_message_to_peers(payload : FastIRC::Message) : Nil
       message = String.build { |io| payload.to_s(io) }
+
       ServerHandler.servers.each do |server|
         next if server == self
         server.send_message(message)
       end
     end
 
-    private def extract_nickname(payload)
+    private def extract_nickname(payload : FastIRC::Message) : String
       payload.prefix.try(&.source) || ""
     end
 
@@ -367,14 +361,7 @@ module Circed
       socket.try(&.closed?) || false
     end
 
-    def send_message(message)
-      Log.info { message }
-      safe_send(message)
-    end
-
-    def send_message(prefix, command, *params)
-      send_irc_message(command, params.to_a, prefix)
-    end
+    # Use UnifiedMessaging methods - these are now consolidated
 
     def close(reason : String = "Closing connection")
       Log.info { "Closing server connection to #{@name}: #{reason}" }
@@ -512,7 +499,7 @@ module Circed
       sender_nick = extract_nickname(payload)
       channel_name = payload.params[0]
 
-      if channel = Network::NetworkState.get_channel(channel_name)
+      Network::NetworkState.get_channel(channel_name).try do |_|
         message = format_state_change_message(payload)
         send_to_local_channel_members(channel_name, message, sender_nick)
       end
@@ -540,7 +527,7 @@ module Circed
       return if payload.params.empty?
 
       old_nick = extract_nickname(payload)
-      new_nick = payload.params[0]
+      # new_nick = payload.params[0]  # Removed unused variable
       message = format_state_change_message(payload)
 
       # Send NICK change to all local users who shared channels with this user

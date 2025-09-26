@@ -50,7 +50,7 @@ module Circed
         return false unless server_name
 
         # Check against configured allowed servers
-        @config.linked_servers.any? { |ls| ls.host == server_name }
+        @config.linked_servers.any? { |linked_server| linked_server.host == server_name }
       end
 
       private def valid_server_password?(password : String?) : Bool
@@ -86,11 +86,15 @@ module Circed
     # Specific credential types
     class ServerCredentials < Core::AuthenticationCredentials
       def server_name : String
-        @server_name.not_nil!
+        name = @server_name
+        return "" unless name
+        name
       end
 
       def password : String
-        @password.not_nil!
+        pwd = @password
+        return "" unless pwd
+        pwd
       end
 
       def initialize(server_name : String, password : String, token : String? = nil)

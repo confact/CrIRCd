@@ -22,7 +22,8 @@ module Circed
       end
       @task_pong_check = Tasker.every(30.seconds) do
         stop_pong_check if client.closed?
-        if @last_pong && @last_pong.not_nil! < 1.minutes.ago
+        last_pong_time = @last_pong
+        if last_pong_time && last_pong_time < 1.minutes.ago
           Log.debug { "PONG timedout for #{nickname} - closing socket" }
           stop_ping
           stop_pong_check
@@ -54,11 +55,11 @@ module Circed
     end
 
     def stop_ping
-      @task_ping.not_nil!.cancel
+      @task_ping.try(&.cancel)
     end
 
     def stop_pong_check
-      @task_pong_check.not_nil!.cancel
+      @task_pong_check.try(&.cancel)
     end
 
     def nickname

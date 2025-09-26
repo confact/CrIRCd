@@ -14,8 +14,8 @@ describe "Server Connection Detection" do
       has_server.should be_false
 
       # The correct logic should check if any line starts with the command
-      has_pass_correct = buffer.any? { |line| line.starts_with?("PASS") }
-      has_server_correct = buffer.any? { |line| line.starts_with?("SERVER") }
+      has_pass_correct = buffer.any?(&.starts_with?("PASS"))
+      has_server_correct = buffer.any?(&.starts_with?("SERVER"))
 
       # These should be true with correct logic
       has_pass_correct.should be_true
@@ -34,8 +34,8 @@ describe "Server Connection Detection" do
       has_user.should be_false
 
       # Correct logic
-      has_nick_correct = buffer.any? { |line| line.starts_with?("NICK") }
-      has_user_correct = buffer.any? { |line| line.starts_with?("USER") }
+      has_nick_correct = buffer.any?(&.starts_with?("NICK"))
+      has_user_correct = buffer.any?(&.starts_with?("USER"))
 
       # These should be true with correct logic
       has_nick_correct.should be_true

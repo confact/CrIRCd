@@ -1,6 +1,8 @@
+require "../performance/metrics"
+
 module Circed
   module Network
-    # RFC 2813 compliant burst protocol implementation
+    # RFC 2813 compliant burst protocol implementation - performance optimized
     # Handles network state synchronization when servers connect
     class BurstProtocol
       include SocketHelper
@@ -9,7 +11,7 @@ module Circed
       def self.send_burst(link_server : LinkServer)
         Log.info { "Starting network burst to #{link_server.name}" }
 
-        begin
+        Performance::Metrics.time_burst do
           # RFC 2813: Send information in this order:
           # 1. Known servers
           # 2. Client information
@@ -22,10 +24,10 @@ module Circed
           # End burst mode
           link_server.safe_send("EOB") # End of Burst
           Log.info { "Completed network burst to #{link_server.name}" }
-        rescue ex
-          Log.error { "Failed to complete burst to #{link_server.name}: #{ex.message}" }
-          raise ex
         end
+      rescue ex
+        Log.error { "Failed to complete burst to #{link_server.name}: #{ex.message}" }
+        raise ex
       end
 
       # Send all known servers to the connecting server
@@ -51,26 +53,44 @@ module Circed
         link_server.safe_send(message)
       end
 
-      # Send all known users to the connecting server
-      private def self.send_user_burst(link_server : LinkServer)
+      # Send all known users to the connecting server - optimized
+      private def self.send_user_burst(link_server : LinkServer) : Nil
         Log.debug { "Sending user burst to #{link_server.name}" }
 
-        NetworkState.users.each do |nickname, user_info|
-          # Don't send users that are on the connecting server
-          next if user_info.server == link_server.name
+        # Pre-allocate collections for better performance
+        away_users = [] of {String, String}  # Collect away users for batch sending
+        target_server_name = link_server.name
 
-          # Format: NICK <nickname> <hopcount> <username> <hostname> <servertoken> <usermodes> :<realname>
+        NetworkState.users.each do |nickname, user_info|
+          # Skip users on the connecting server
+          next if user_info.server == target_server_name
+
+          # Build NICK message efficiently with calculated capacity
           hopcount = user_info.hopcount + 1
           server_token = get_server_token(user_info.server)
-          modes = user_info.modes.empty? ? "+" : "+#{user_info.modes.join("")}"
+          modes = user_info.modes.empty? ? "+" : "+#{user_info.modes.join}"
 
-          message = "NICK #{nickname} #{hopcount} #{user_info.username} #{user_info.hostname} #{server_token} #{modes} :#{user_info.realname}"
+          # Pre-calculate message size for optimal String.build performance
+          capacity = 20 + nickname.size + user_info.username.size + user_info.hostname.size +
+                    server_token.size + modes.size + user_info.realname.size
+
+          message = String.build(capacity: capacity) do |io|
+            io << "NICK " << nickname << ' ' << hopcount << ' '
+            io << user_info.username << ' ' << user_info.hostname << ' '
+            io << server_token << ' ' << modes << " :" << user_info.realname
+          end
+
           link_server.safe_send(message)
 
-          # Send away message if user is away
+          # Collect away users for batch processing
           if away_msg = user_info.away_message
-            link_server.safe_send("AWAY #{nickname} :#{away_msg}")
+            away_users << {nickname, away_msg}
           end
+        end
+
+        # Send away messages in batch to reduce system calls
+        away_users.each do |(nickname, away_msg)|
+          link_server.safe_send("AWAY #{nickname} :#{away_msg}")
         end
       end
 
@@ -103,30 +123,33 @@ module Circed
       end
 
       # Send NJOIN command for efficient channel member synchronization
-      private def self.send_njoin_burst(link_server : LinkServer, channel_name : String, channel_info : NetworkState::ChannelInfo)
+      private def self.send_njoin_burst(link_server : LinkServer, channel_name : String, channel_info : NetworkState::ChannelInfo) : Nil
         # Group members by their modes for efficient NJOIN
-        members_by_modes = Hash(Set(Char), Array(String)).new
+        members_by_modes = Hash(Set(Char), Array(String)).new { |h, k| h[k] = [] of String }
 
         channel_info.members.each do |nickname, modes|
-          members_by_modes[modes] ||= Array(String).new
           members_by_modes[modes] << nickname
         end
 
         # Send NJOIN for each mode group
         members_by_modes.each do |modes, nicknames|
-          # Don't send users that are on the connecting server
+          # Filter out users on the connecting server
           filtered_nicks = nicknames.reject do |nick|
-            user = NetworkState.get_user(nick)
-            user && user.server == link_server.name
+            if user = NetworkState.get_user(nick)
+              user.server == link_server.name
+            else
+              false
+            end
           end
 
           next if filtered_nicks.empty?
 
-          # Format: NJOIN <channel> <modes> :nickname1 nickname2 nickname3
-          mode_prefix = modes.empty? ? "" : "+#{modes.join("")}"
-          nicks_list = filtered_nicks.join(" ")
-
-          message = "NJOIN #{channel_name} #{mode_prefix} :#{nicks_list}"
+          # Build NJOIN message efficiently
+          message = String.build do |io|
+            io << "NJOIN " << channel_name << ' '
+            io << '+' << modes.join unless modes.empty?
+            io << " :" << filtered_nicks.join(' ')
+          end
           link_server.safe_send(message)
         end
       end
@@ -231,11 +254,7 @@ module Circed
           topic = topic.lstrip(':')
         end
 
-        if channel = NetworkState.get_channel(channel_name)
-          channel.topic = topic
-          channel.topic_set_by = topic_by
-          channel.topic_set_at = Time.utc
-        end
+        NetworkState.set_channel_topic(channel_name, topic, topic_by)
 
         Log.debug { "Received topic for #{channel_name} from #{link_server.name}" }
       end
@@ -262,9 +281,7 @@ module Circed
         away_msg = params[1..]?.try(&.join(" ")) || ""
         away_msg = away_msg.lstrip(':')
 
-        if user = NetworkState.get_user(nickname)
-          user.away_message = away_msg.empty? ? nil : away_msg
-        end
+        NetworkState.set_user_away(nickname, away_msg.empty? ? nil : away_msg)
 
         Log.debug { "Received away status for #{nickname} from #{link_server.name}" }
       end
@@ -272,7 +289,7 @@ module Circed
       private def self.process_end_of_burst(link_server : LinkServer)
         Log.info { "Received end of burst from #{link_server.name}" }
         # Mark server as fully synchronized
-        if server = NetworkState.get_server(link_server.name)
+        NetworkState.get_server(link_server.name).try do |_|
           # Could add a "burst_complete" flag to ServerInfo if needed
         end
       end

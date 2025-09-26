@@ -27,23 +27,23 @@ module Circed
       end
 
       def count : Int32
-        @@channels.size
+        size
       end
 
       def exists?(name : String) : Bool
         @@channels.has_key?(name)
       end
 
-      def join_user(channel_name : String, nickname : String, password : String? = nil) : Bool
-        # Enhanced method that also validates password if needed
+      # Unified join method that handles both password and modes
+      def join_user(channel_name : String, nickname : String, password : String? = nil, modes : Set(Char) = Set(Char).new) : Bool
         channel = create_channel(channel_name)
 
-        # Password validation
-        unless channel.password_matches?(password)
-          return false
+        # Password validation if provided
+        if password
+          return false unless channel.password_matches?(password)
         end
 
-        channel.add_member(nickname)
+        channel.add_member(nickname, modes)
         true
       end
 
@@ -64,18 +64,12 @@ module Circed
         end
       end
 
-      def join_user(channel_name : String, nickname : String, modes = Set(Char).new) : Bool
-        channel = create_channel(channel_name)
-        channel.add_member(nickname, modes)
-        true
-      end
-
       def part_user(channel_name : String, nickname : String) : Bool
         if channel = get(channel_name)
           removed = channel.remove_member(nickname)
 
           # Remove empty channels
-          if channel.is_empty?
+          if channel.empty?
             remove(channel_name)
           end
 
@@ -152,11 +146,7 @@ module Circed
       end
 
       def is_user_in_channel?(channel_name : String, nickname : String) : Bool
-        if channel = get(channel_name)
-          channel.has_member?(nickname)
-        else
-          false
-        end
+        get(channel_name).try(&.has_member?(nickname)) || false
       end
 
       def get_user_modes_in_channel(channel_name : String, nickname : String) : Set(Char)?
@@ -168,19 +158,11 @@ module Circed
       end
 
       def is_user_operator?(channel_name : String, nickname : String) : Bool
-        if modes = get_user_modes_in_channel(channel_name, nickname)
-          modes.includes?('o')
-        else
-          false
-        end
+        get_user_modes_in_channel(channel_name, nickname).try(&.includes?('o')) || false
       end
 
       def is_user_voiced?(channel_name : String, nickname : String) : Bool
-        if modes = get_user_modes_in_channel(channel_name, nickname)
-          modes.includes?('v')
-        else
-          false
-        end
+        get_user_modes_in_channel(channel_name, nickname).try(&.includes?('v')) || false
       end
 
       # Bulk operations
@@ -192,7 +174,7 @@ module Circed
             affected_channels << channel_name
 
             # Remove empty channels
-            if channel.is_empty?
+            if channel.empty?
               remove(channel_name)
             end
           end
@@ -204,7 +186,7 @@ module Circed
       def cleanup_empty_channels : Int32
         removed_count = 0
 
-        @@channels.select { |_, channel| channel.is_empty? }.each do |name, _|
+        @@channels.select { |_, channel| channel.empty? }.each do |name, _|
           remove(name)
           removed_count += 1
         end
@@ -220,7 +202,7 @@ module Circed
           total:           size,
           total_members:   total_members,
           average_members: size > 0 ? (total_members / size) : 0,
-          empty:           @@channels.values.count(&.is_empty?),
+          empty:           @@channels.values.count(&.empty?),
         }
       end
 

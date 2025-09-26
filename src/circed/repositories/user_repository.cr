@@ -30,7 +30,7 @@ module Circed
       end
 
       def count : Int32
-        @@users.size
+        size
       end
 
       def add_user(user : User) : Void
@@ -46,21 +46,7 @@ module Circed
         @@users[user.nickname] = domain_user
       end
 
-      def update_nickname(old_nickname : String, new_nickname : String) : Bool
-        return false unless @@clients.has_key?(old_nickname)
-
-        client = @@clients[old_nickname]
-        @@clients.delete(old_nickname)
-        @@clients[new_nickname] = client
-
-        if user = @@users[old_nickname]?
-          @@users.delete(old_nickname)
-          user.nickname = new_nickname
-          @@users[new_nickname] = user
-        end
-
-        true
-      end
+      # Removed duplicate - use change_nickname instead
 
       def clear : Void
         @@users.clear
@@ -87,20 +73,25 @@ module Circed
       end
 
       def change_nickname(old_nickname : String, new_nickname : String) : Bool
-        if user = @@users[old_nickname]?
-          user.nickname = new_nickname
-          @@users[new_nickname] = user
-          @@users.delete(old_nickname)
+        user = @@users[old_nickname]?
+        return false unless user
 
-          if client = @@clients[old_nickname]?
-            @@clients[new_nickname] = client
-            @@clients.delete(old_nickname)
-          end
+        # Update user
+        user.nickname = new_nickname
+        @@users[new_nickname] = user
+        @@users.delete(old_nickname)
 
-          true
-        else
-          false
+        # Update client if exists
+        if client = @@clients[old_nickname]?
+          @@clients[new_nickname] = client
+          @@clients.delete(old_nickname)
         end
+
+        true
+      end
+
+      def update_nickname(old_nickname : String, new_nickname : String) : Bool
+        change_nickname(old_nickname, new_nickname)
       end
 
       # Query methods

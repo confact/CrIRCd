@@ -1,14 +1,12 @@
-module Circed
-  class Actions::Kick
-    extend Circed::ActionHelper
+require "./base_action"
 
-    def self.call(sender, message)
+module Circed
+  class Actions::Kick < Actions::ChannelAction
+    protected def self.execute_action(sender : Client, message : Array(String)) : Nil
       Log.debug { "kick: #{message}" }
 
       channel_name = message.first
-      return send_error(sender, Numerics::ERR_BADCHANMASK, channel_name, "Wrong channel format") unless channel_name.starts_with?("#")
-
-      return unless sender.nickname
+      return unless Utils::IrcUtils.validate_channel_name(sender, channel_name)
 
       kicked_nickname = message[1]
       reason = message[2..-1].join(" ") if message.size > 2

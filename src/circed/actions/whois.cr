@@ -1,13 +1,13 @@
-module Circed
-  class Actions::Whois
-    extend Circed::ActionHelper
+require "./base_action"
 
-    def self.call(sender, target_nickname : String)
-      user_repository = Infrastructure::ServiceLocator.user_repository
+module Circed
+  class Actions::Whois < Actions::UserAction
+    protected def self.execute_action(sender : Client, target_nickname : String) : Nil
+      user_repository = get_user_repository
       target = user_repository.get_client(target_nickname)
 
       if target.nil?
-        send_error(sender, Numerics::ERR_NOSUCHNICK, target_nickname, "No such nick")
+        Utils::IrcUtils.send_no_such_nick_error(sender, target_nickname)
         return
       end
 

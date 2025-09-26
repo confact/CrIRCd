@@ -1,35 +1,10 @@
-module Circed
-  class Actions::Privmsg
-    extend Circed::ActionHelper
+require "./base_action"
 
-    def self.call(sender, receiver, message : Array(String))
-      if receiver.starts_with?("#")
-        channel_repository = Infrastructure::ServiceLocator.channel_repository
-        channel = channel_repository.get(receiver)
-        if channel
-          sender.update_activity
-          send_to_channel(channel) do |_receiver, io|
-            next if io.nil?
-            next if _receiver == sender
-            parse(sender, message, io)
-          end
-        else
-          send_error(sender, Numerics::ERR_NOSUCHCHANNEL, "No such channel")
-        end
-      else
-        user_repository = Infrastructure::ServiceLocator.user_repository
-        client = user_repository.get_client(receiver)
-        if client
-          sender.update_activity
-          send_to_user(receiver) do |_receiver, io|
-            next if io.nil?
-            next if _receiver == sender
-            parse(sender, message, io)
-          end
-        else
-          send_error(sender, Numerics::ERR_NOSUCHNICK, "No such nick")
-        end
-      end
+module Circed
+  class Actions::Privmsg < Actions::BaseAction
+    protected def self.execute_action(sender : Client, target : String, message : String) : Nil
+      irc_service = Infrastructure::ServiceLocator.irc_service
+      irc_service.route_message(sender, target, message)
     end
   end
 end

@@ -27,7 +27,7 @@ describe Circed::Actions::Kick do
     Circed::Actions::Kick.call(sender, ["#test", "Bob", "testing kick"])
 
     # Verify Bob was kicked
-    user_in_channel?(channel_name, kicked_user.nickname.to_s).should be_false
+    is_user_in_channel?(channel_name, kicked_user.nickname.to_s).should be_false
   end
 
   it "does not kick a user if sender is not an operator" do
@@ -45,13 +45,13 @@ describe Circed::Actions::Kick do
     domain_channel.members["Alice"].delete('o')
 
     # Verify sender is in channel but not an operator
-    user_in_channel?(channel_name, sender.nickname.to_s).should be_true
+    is_user_in_channel?(channel_name, sender.nickname.to_s).should be_true
     domain_channel.members["Alice"].includes?('o').should be_false
 
     # Call the kick action
     Circed::Actions::Kick.call(sender, ["#test", "Bob", "testing kick"])
 
     # Bob should still be in channel since Alice is not an operator
-    user_in_channel?(channel_name, kicked_user.nickname.to_s).should be_true
+    is_user_in_channel?(channel_name, kicked_user.nickname.to_s).should be_true
   end
 end

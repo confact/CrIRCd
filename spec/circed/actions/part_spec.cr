@@ -17,7 +17,7 @@ describe Circed::Actions::Part do
 
     Circed::Actions::Part.call(sender, channel_name)
 
-    user_in_channel?(channel_name, sender.nickname.to_s).should be_false
+    is_user_in_channel?(channel_name, sender.nickname.to_s).should be_false
     channel_empty?(channel_name).should be_true
   end
 
@@ -27,7 +27,7 @@ describe Circed::Actions::Part do
 
     Circed::Actions::Part.call(sender, channel_name)
 
-    user_in_channel?(channel_name, sender.nickname.to_s).should be_false
+    is_user_in_channel?(channel_name, sender.nickname.to_s).should be_false
     channel_empty?(channel_name).should be_true
   end
 
@@ -40,7 +40,7 @@ describe Circed::Actions::Part do
 
     Circed::Actions::Part.call(sender, channel_name)
 
-    user_in_channel?(channel_name, sender.nickname.to_s).should be_false
+    is_user_in_channel?(channel_name, sender.nickname.to_s).should be_false
     channel_empty?(channel_name).should be_false
   end
 end

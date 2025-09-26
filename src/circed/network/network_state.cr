@@ -4,25 +4,30 @@ module Circed
     # Maintains network-wide information about servers, users, and channels
     class NetworkState
       # Global server database - all known servers in the network
-      @@servers = Hash(String, ServerInfo).new
+      # Pre-allocate capacity for better performance
+      @@servers = Hash(String, ServerInfo).new(initial_capacity: 64)
 
       # Global user database - all users across the network
-      @@users = Hash(String, UserInfo).new
+      @@users = Hash(String, UserInfo).new(initial_capacity: 1024)
 
       # Global channel database - all channels across the network
-      @@channels = Hash(String, ChannelInfo).new
+      @@channels = Hash(String, ChannelInfo).new(initial_capacity: 256)
 
       # Network topology - server connections
-      @@topology = Hash(String, Set(String)).new
+      @@topology = Hash(String, Set(String)).new(initial_capacity: 64)
 
-      # Server information structure
+      # Cache for frequently accessed data
+      @@user_server_cache = Hash(String, String).new(initial_capacity: 1024)
+      @@last_cache_update = Time.monotonic
+
+      # Server information structure - using struct for performance
       struct ServerInfo
-        property name : String
-        property hopcount : Int32
-        property description : String
-        property link_server : LinkServer?
-        property token : String?
-        property connected_at : Time
+        getter name : String
+        getter hopcount : Int32
+        getter description : String
+        getter link_server : LinkServer?
+        getter token : String?
+        getter connected_at : Time
 
         def initialize(@name : String, @hopcount : Int32, @description : String,
                        @link_server : LinkServer? = nil, @token : String? = nil)
@@ -30,38 +35,43 @@ module Circed
         end
       end
 
-      # User information structure
+      # User information structure - using struct for performance
       struct UserInfo
-        property nickname : String
-        property username : String
-        property hostname : String
-        property realname : String
-        property server : String
-        property hopcount : Int32
-        property modes : Set(Char)
-        property away_message : String?
-        property connected_at : Time
+        getter nickname : String
+        getter username : String
+        getter hostname : String
+        getter realname : String
+        getter server : String
+        getter hopcount : Int32
+        property modes : Set(Char)  # Mutable for mode changes
+        property away_message : String?  # Mutable for away status
+        getter connected_at : Time
+        @hostmask : String?  # Cached hostmask
 
         def initialize(@nickname : String, @username : String, @hostname : String,
                        @realname : String, @server : String, @hopcount : Int32 = 0)
-          @modes = Set(Char).new
+          @modes = Set(Char).new(initial_capacity: 4)  # Most users have few modes
           @connected_at = Time.utc
+          @hostmask = nil
         end
 
-        def hostmask
-          "#{nickname}!#{username}@#{hostname}"
+        # Cached hostmask generation for better performance
+        def hostmask : String
+          @hostmask ||= String.build(capacity: @nickname.size + @username.size + @hostname.size + 2) do |io|
+            io << @nickname << '!' << @username << '@' << @hostname
+          end
         end
       end
 
-      # Channel information structure
+      # Channel information structure - using struct for performance
       struct ChannelInfo
-        property name : String
-        property topic : String?
-        property modes : Set(Char)
-        property members : Hash(String, Set(Char)) # nickname => user modes in channel
-        property created_at : Time
-        property topic_set_by : String?
-        property topic_set_at : Time?
+        getter name : String
+        property topic : String?  # Mutable for topic changes
+        property modes : Set(Char)  # Mutable for mode changes
+        property members : Hash(String, Set(Char))  # Mutable for joins/parts
+        getter created_at : Time
+        property topic_set_by : String?  # Mutable for topic updates
+        property topic_set_at : Time?  # Mutable for topic updates
 
         def initialize(@name : String)
           @modes = Set(Char).new
@@ -100,39 +110,40 @@ module Circed
       private def self.notify_netsplit(server_name : String, removed_users : Hash(String, Array(Tuple(String, UserInfo))))
         # Send proper QUIT messages to local users for each removed user
         removed_users.each do |disconnected_server, users|
-          users.each do |nickname, user_info|
+          users.each do |(nickname, user_info)|  # Use tuple unpacking
             send_quit_to_local_users(nickname, user_info, disconnected_server)
           end
         end
       end
 
       private def self.send_quit_to_local_users(nickname : String, user_info : UserInfo, server_name : String)
-        # Find all channels the user was in before being removed
         user_repository = Infrastructure::ServiceLocator.user_repository
-        affected_channels = @@channels.select do |_, channel|
-          # Check if any local users are in channels (since remote user is already removed)
-          channel.members.keys.any? { |nick| user_repository.get_client(nick) }
+
+        # Build quit message once with optimal capacity
+        hostmask = user_info.hostmask
+        quit_message_capacity = hostmask.size + server_name.size + Server.name.size + 10
+        quit_message = String.build(capacity: quit_message_capacity) do |io|
+          io << ':' << hostmask << " QUIT :" << server_name << ' ' << Server.name
         end
 
-        # Create netsplit quit message
-        hostmask = "#{nickname}!#{user_info.username}@#{user_info.hostname}"
-        quit_reason = "#{server_name} #{Server.name}"
-        quit_message = ":#{hostmask} QUIT :#{quit_reason}"
+        # Use more efficient set with initial capacity
+        local_users_notified = Set(String).new(initial_capacity: 32)
 
-        # Send to all local users (avoid duplicates)
-        local_users_notified = Set(String).new
-
-        affected_channels.each do |channel_name, channel|
-          channel.members.keys.each do |local_nick|
+        # Pre-collect local clients to avoid repeated lookups
+        local_clients = [] of {String, Client}
+        @@channels.each_value do |channel|
+          channel.members.each_key do |local_nick|
             next if local_users_notified.includes?(local_nick)
-            next unless user_repository.get_client(local_nick)
 
             if client = user_repository.get_client(local_nick)
-              client.send_message(quit_message)
+              local_clients << {local_nick, client}
               local_users_notified << local_nick
             end
           end
         end
+
+        # Send messages in batch
+        local_clients.each { |(_, client)| client.send_message(quit_message) }
       end
 
       private def self.find_affected_servers(name : String) : Array(String)
@@ -143,9 +154,18 @@ module Circed
         removed_users_by_server = Hash(String, Array(Tuple(String, UserInfo))).new
 
         server_names.each do |server_name|
-          users_to_remove = @@users.select { |_, user| user.server == server_name }
-          removed_users_by_server[server_name] = users_to_remove.to_a
-          users_to_remove.each { |nickname, _| remove_user(nickname) }
+          # Collect users to remove in a single pass
+          users_to_remove = [] of Tuple(String, UserInfo)
+
+          @@users.each do |nickname, user|
+            if user.server == server_name
+              users_to_remove << {nickname, user}
+            end
+          end
+
+          # Store and remove users
+          removed_users_by_server[server_name] = users_to_remove
+          users_to_remove.each { |(nickname, _)| remove_user(nickname) }
         end
 
         removed_users_by_server
@@ -159,14 +179,27 @@ module Circed
       end
 
       private def self.cleanup_channels(server_names : Array(String))
-        @@channels.each do |channel_name, channel|
-          server_names.each do |server_name|
-            users_on_server = @@users.select { |_, user| user.server == server_name }
-            users_on_server.keys.each { |nick| channel.members.delete(nick) }
+        # Collect nicknames from affected servers first
+        affected_nicknames = Set(String).new
+        @@users.each do |nickname, user|
+          if server_names.includes?(user.server)
+            affected_nicknames << nickname
           end
-
-          @@channels.delete(channel_name) if channel.members.empty?
         end
+
+        # Clean up channels
+        channels_to_delete = [] of String
+
+        @@channels.each do |channel_name, channel|
+          # Remove affected users from channel
+          affected_nicknames.each { |nick| channel.members.delete(nick) }
+
+          # Mark empty channels for deletion
+          channels_to_delete << channel_name if channel.members.empty?
+        end
+
+        # Delete empty channels
+        channels_to_delete.each { |name| @@channels.delete(name) }
       end
 
       private def self.update_topology(server_names : Array(String))
@@ -182,17 +215,21 @@ module Circed
                         realname : String, server : String, hopcount : Int32 = 0)
         user_info = UserInfo.new(nickname, username, hostname, realname, server, hopcount)
         @@users[nickname] = user_info
+        # Update cache for fast server lookups
+        @@user_server_cache[nickname] = server
         Log.debug { "Added user #{nickname} to network state on server #{server}" }
       end
 
-      # Remove user from global network state
+      # Remove user from global network state - optimized
       def self.remove_user(nickname : String)
         return unless @@users.has_key?(nickname)
 
-        # Remove user from all channels
-        @@channels.each { |_, channel| channel.members.delete(nickname) }
+        # Remove user from all channels efficiently
+        @@channels.each_value { |channel| channel.members.delete(nickname) }
 
+        # Clean up caches
         @@users.delete(nickname)
+        @@user_server_cache.delete(nickname)
         Log.debug { "Removed user #{nickname} from network state" }
       end
 
@@ -281,8 +318,52 @@ module Circed
         @@users[nickname]?
       end
 
+      # Set away message for a user - optimized
+      def self.set_user_away(nickname : String, message : String?)
+        if @@users.has_key?(nickname)
+          # Create a new struct with updated away_message
+          old_user = @@users[nickname]
+          new_user = UserInfo.new(
+            old_user.nickname,
+            old_user.username,
+            old_user.hostname,
+            old_user.realname,
+            old_user.server,
+            old_user.hopcount
+          )
+          new_user.modes = old_user.modes
+          new_user.away_message = message
+          @@users[nickname] = new_user
+        end
+      end
+
+      # Fast server lookup using cache
+      def self.get_user_server(nickname : String) : String?
+        @@user_server_cache[nickname]?
+      end
+
+      # Clear caches when needed (call periodically or when memory pressure)
+      def self.clear_caches
+        @@user_server_cache.clear
+        @@last_cache_update = Time.monotonic
+
+        # Rebuild critical caches
+        @@users.each { |nickname, user| @@user_server_cache[nickname] = user.server }
+      end
+
       def self.get_channel(name : String)
         @@channels[name]?
+      end
+
+      # Set topic for a channel
+      def self.set_channel_topic(name : String, topic : String?, set_by : String? = nil)
+        if @@channels.has_key?(name)
+          channel = @@channels[name]
+          channel.topic = topic
+          channel.topic_set_by = set_by
+          channel.topic_set_at = Time.utc if topic
+          @@channels[name] = channel
+        end
       end
 
       # Find all servers that would be disconnected if the given server splits

@@ -185,38 +185,49 @@ module Circed
 
     private def run_commands(payload : FastIRC::Message)
       case payload.command
-      when Actions::List::COMMAND
+      when "LIST"
         Actions::List.call(self)
-      when Actions::Whois::COMMAND
-        Actions::Whois.call(self, payload.params.first)
-      when Actions::Nick::COMMAND
-        Actions::Nick.call(self, payload.params.first)
+      when "WHOIS"
+        Actions::Whois.call(self, payload.params.first) if payload.params.any?
+      when "NICK"
+        Actions::Nick.call(self, payload.params.first) if payload.params.any?
       when "USER"
         set_user(payload.params)
       when "PONG"
         pong(payload.params)
       when "PING"
         ping(payload.params)
-      when Actions::Join::COMMAND
+      when "JOIN"
         return if payload.params.empty?
         Actions::Join.call(self, payload.params.first)
-      when Actions::Part::COMMAND
+      when "PART"
         Actions::Part.call(self, payload.params.first)
-      when Actions::Mode::COMMAND
+      when "MODE"
         Actions::Mode.call(self, payload.params)
       when "QUIT"
+        Actions::Quit.call(self, payload.params.join(" ")) if payload.params.any?
         quit(payload.params)
-      when Actions::Kick::COMMAND
+      when "KICK"
         Actions::Kick.call(self, payload.params)
-      when Actions::Topic::COMMAND
+      when "TOPIC"
         Actions::Topic.call(self, payload.params)
-      when Actions::Invite::COMMAND
+      when "INVITE"
+        return if payload.params.size < 2
         invited_user = payload.params.first
         Actions::Invite.call(self, invited_user, payload.params)
       when "NOTICE"
         notice(payload.params)
-      when Actions::Privmsg::COMMAND
+      when "PRIVMSG"
         Actions::Privmsg.call(self, payload.params.first, payload.params)
+      when "AWAY"
+        Actions::Away.call(self, payload.params.join(" ")) if payload.params.any?
+      when "CAP"
+        return if payload.params.empty?
+        Actions::Cap.call(self, payload.params)
+      when "WHO"
+        Actions::Who.call(self, payload.params.first) if payload.params.any?
+      when "NAMES"
+        Actions::Names.call(self, payload.params.first) if payload.params.any?
       end
     end
 

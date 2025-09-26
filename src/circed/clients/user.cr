@@ -17,11 +17,11 @@ module Circed
       io << realname
     end
 
-    def is_operator?
+    def operator?
       mode.include? "o"
     end
 
-    def is_wallops?
+    def wallops?
       mode.include? "w"
     end
   end

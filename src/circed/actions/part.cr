@@ -1,19 +1,10 @@
+require "./base_action"
+
 module Circed
-  class Actions::Part
-    extend Circed::ActionHelper
-
-    def self.call(sender, channel : String, reason : String? = nil)
-      channels = channel.split(",")
+  class Actions::Part < Actions::ChannelAction
+    protected def self.execute_action(sender : Client, channel_name : String, reason : String? = nil) : Nil
       irc_service = Infrastructure::ServiceLocator.irc_service
-
-      channels.each do |ch|
-        ch = ch.strip
-
-        next if ch.empty?
-
-        # Use IRC service for parting with full validation
-        irc_service.part_channel(sender, ch, reason)
-      end
+      irc_service.part_channel(sender, channel_name, reason)
     end
   end
 end

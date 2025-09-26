@@ -1,45 +1,44 @@
+require "./base_action"
+
 module Circed
-  class Actions::Nick
-    extend Circed::ActionHelper
+  class Actions::Nick < Actions::BaseAction
 
-    def self.call(sender, new_nickname : String)
-      user_repository = Infrastructure::ServiceLocator.user_repository
+    protected def self.execute_action(sender : Client, new_nickname : String) : Nil
 
-      if user_repository.has_client?(new_nickname)
-        send_error(sender, Numerics::ERR_NICKNAMEINUSE, new_nickname, "Nickname is already in used")
+      old_nickname = sender.nickname
+
+      # Check if nickname is already in use (local or remote)
+      user_repository = get_user_repository
+      if user_repository.has_client?(new_nickname) || Network::NetworkState.get_user(new_nickname)
+        Utils::IrcUtils.send_nickname_in_use_error(sender, new_nickname)
         return
       end
 
-      changed = !sender.nickname.to_s.empty?
-      old_nickname = sender.nickname.to_s
-
-      if changed
-        begin
-          Log.debug { "changing nickname to: #{new_nickname} " }
-          unless user_repository.get_client(old_nickname)
-            raise Exception.new("Nickname not found in repository")
-          end
-          user_repository.update_nickname(old_nickname, new_nickname)
-          send_to_user(sender) do |_receiver, io|
-            parse(sender, [new_nickname], io) if io
-          end
-          send_to_user_channel(sender) do |receiver, io|
-            next if receiver == sender
-            parse(sender, [new_nickname], io) if io
-          end
-          sender.nickname = new_nickname
-        rescue e : Exception
-          Log.debug { "error, nickname is not used: #{old_nickname} " }
-          user_repository.update_nickname(new_nickname, old_nickname) if user_repository.get_client(new_nickname)
-          sender.nickname = old_nickname
-          send_error(sender, Numerics::ERR_ERRONEUSNICKNAME, old_nickname, "Nickname is not used.")
-        end
-      else
-        Log.debug { "Set nickname to: #{new_nickname} " }
+      if old_nickname.nil?
+        # Initial nickname setting during registration
         sender.nickname = new_nickname
-        send_to_user(sender) do |_receiver, io|
-          io << ":#{Server.clean_name} NICK :#{sender.nickname}\n" if io
+        
+        # Add client to user repository
+        user_repository.add_client(sender)
+        
+        # Create domain user if we have enough information
+        if user_info = sender.user
+          hostname = sender.host || "localhost"
+          domain_user = Domain::User.new(
+            new_nickname,
+            user_info.name,
+            hostname,
+            user_info.realname,
+            Server.config.host
+          )
+          user_repository.add(new_nickname, domain_user)
         end
+        
+        # Note: Registration completion is handled elsewhere in the system
+      else
+        # Use IRC service for nickname change (it will update the client's nickname)
+        irc_service = Infrastructure::ServiceLocator.irc_service
+        irc_service.change_nickname(sender, new_nickname)
       end
     end
   end
