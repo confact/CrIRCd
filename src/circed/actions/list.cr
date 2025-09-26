@@ -2,12 +2,11 @@ require "./base_action"
 
 module Circed
   class Actions::List < Actions::BaseAction
-
     protected def self.execute_action(sender : Client) : Nil
       send_reply(sender, Numerics::RPL_LISTSTART, "Channel", "Users  Name", " :Start of /LIST")
 
       # Get all channels from repository
-      channel_repo = get_channel_repository
+      channel_repo = channel_repository
       channel_repo.all.each do |channel|
         # Check secret mode and user access
         next if channel.secret? && !channel.has_member?(sender.nickname.to_s)

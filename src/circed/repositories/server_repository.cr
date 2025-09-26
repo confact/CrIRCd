@@ -160,19 +160,19 @@ module Circed
 
       def find_servers_by_pattern(pattern : String) : Array(Domain::Server)
         regex = Regex.new(pattern.gsub("*", ".*"))
-        @@servers.values.select { |server| server.name.matches?(regex) }
+        @@servers.values.select(&.name.matches?(regex))
       end
 
       def get_server_by_token(token : String) : Domain::Server?
         @@servers.values.find { |server| server.token == token }
       end
 
-      def get_link_servers : Array(LinkServer)
+      def link_servers : Array(LinkServer)
         @@servers.values.compact_map(&.link_server)
       end
 
       def find_server_for_user(nickname : String) : Domain::Server?
-        @@servers.values.find { |server| server.users.includes?(nickname) }
+        @@servers.values.find(&.users.includes?(nickname))
       end
 
       # Network statistics

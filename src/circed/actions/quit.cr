@@ -7,4 +7,4 @@ module Circed
       irc_service.quit_user(sender, reason)
     end
   end
-end 
+end

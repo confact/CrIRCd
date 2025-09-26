@@ -58,7 +58,7 @@ module Circed
         Log.debug { "Sending user burst to #{link_server.name}" }
 
         # Pre-allocate collections for better performance
-        away_users = [] of {String, String}  # Collect away users for batch sending
+        away_users = [] of {String, String} # Collect away users for batch sending
         target_server_name = link_server.name
 
         NetworkState.users.each do |nickname, user_info|
@@ -72,7 +72,7 @@ module Circed
 
           # Pre-calculate message size for optimal String.build performance
           capacity = 20 + nickname.size + user_info.username.size + user_info.hostname.size +
-                    server_token.size + modes.size + user_info.realname.size
+                     server_token.size + modes.size + user_info.realname.size
 
           message = String.build(capacity: capacity) do |io|
             io << "NICK " << nickname << ' ' << hopcount << ' '
@@ -125,7 +125,7 @@ module Circed
       # Send NJOIN command for efficient channel member synchronization
       private def self.send_njoin_burst(link_server : LinkServer, channel_name : String, channel_info : NetworkState::ChannelInfo) : Nil
         # Group members by their modes for efficient NJOIN
-        members_by_modes = Hash(Set(Char), Array(String)).new { |h, k| h[k] = [] of String }
+        members_by_modes = Hash(Set(Char), Array(String)).new { |hash, key| hash[key] = [] of String }
 
         channel_info.members.each do |nickname, modes|
           members_by_modes[modes] << nickname

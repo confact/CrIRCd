@@ -3,8 +3,8 @@ require "./base_action"
 module Circed
   class Actions::Whois < Actions::UserAction
     protected def self.execute_action(sender : Client, target_nickname : String) : Nil
-      user_repository = get_user_repository
-      target = user_repository.get_client(target_nickname)
+      user_repo = user_repository
+      target = user_repo.get_client(target_nickname)
 
       if target.nil?
         Utils::IrcUtils.send_no_such_nick_error(sender, target_nickname)

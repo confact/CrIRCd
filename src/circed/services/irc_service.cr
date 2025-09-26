@@ -11,7 +11,7 @@ module Circed
                      @notification_service : NotificationService)
       end
 
-# Removed duplicate error handling - now using Utils::IrcUtils
+      # Removed duplicate error handling - now using Utils::IrcUtils
 
       # User joins a channel with proper validation, notifications, and network sync
       def join_channel(client : Client, channel_name : String, password : String? = nil) : Bool
@@ -165,7 +165,8 @@ module Circed
 
       # Route messages to local or remote targets
       def route_message(sender : Client, target : String, message : String) : Bool
-        return false unless sender_nick = sender.nickname
+        sender_nick = sender.nickname
+        return false unless sender_nick
 
         if target.starts_with?("#")
           # Channel message
@@ -221,7 +222,8 @@ module Circed
 
       # Change channel or user modes with network sync
       def change_mode(client : Client, target : String, mode_string : String, mode_target : String? = nil) : Bool
-        return false unless nickname = client.nickname
+        nickname = client.nickname
+        return false unless nickname
 
         if target.starts_with?("#") || target.starts_with?("&")
           # Channel mode
@@ -501,7 +503,7 @@ module Circed
         return false unless sender_nick = sender.nickname
 
         # Check if sender is in channel
-        unless @channel_repository.is_user_in_channel?(channel_name, sender_nick)
+        unless @channel_repository.user_in_channel?(channel_name, sender_nick)
           Utils::IrcUtils.send_cannot_send_to_channel_error(sender, channel_name)
           return false
         end
@@ -533,7 +535,7 @@ module Circed
               )
             end
           end
-          
+
           @notification_service.notify_private_message(sender_nick, target, message)
           true
         else
@@ -544,7 +546,7 @@ module Circed
               route_to_server = find_route_to_server(target_server)
               if route_to_server
                 # Find the server by name
-                server = ServerHandler.servers.find { |s| s.name == route_to_server }
+                server = ServerHandler.servers.find { |server_handler| server_handler.name == route_to_server }
                 if server
                   server.safe_send(":#{sender.hostmask} PRIVMSG #{target} :#{message}")
                   true
@@ -590,11 +592,11 @@ module Circed
             Log.warn { "Found empty nickname in channel #{channel.name}" }
             next
           end
-          
+
           prefix = ""
-          prefix += "@" if modes.includes?('o')  # Operator
-          prefix += "%" if modes.includes?('h')  # Halfop
-          prefix += "+" if modes.includes?('v')  # Voice
+          prefix += "@" if modes.includes?('o') # Operator
+          prefix += "%" if modes.includes?('h') # Halfop
+          prefix += "+" if modes.includes?('v') # Voice
           names << "#{prefix}#{member_nick}"
         end
 

@@ -109,7 +109,7 @@ describe "Netsplit QUIT message format" do
       servers = [
         {"A.irc", 1, "Server A"},
         {"B.irc", 2, "Server B"},
-        {"C.irc", 3, "Server C"}
+        {"C.irc", 3, "Server C"},
       ]
 
       servers.each do |(name, hop, desc)|
@@ -124,7 +124,7 @@ describe "Netsplit QUIT message format" do
       users = [
         {"userA", "A.irc"},
         {"userB", "B.irc"},
-        {"userC", "C.irc"}
+        {"userC", "C.irc"},
       ]
 
       users.each do |(nick, server)|

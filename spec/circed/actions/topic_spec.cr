@@ -22,10 +22,13 @@ describe Circed::Actions::Topic do
     Circed::Actions::Topic.call(sender, [channel_name, new_topic])
 
     # Check domain channel directly
-    channel = get_test_channel(channel_name).not_nil!
-    channel.topic.should eq(new_topic)
-    channel.topic_set_by.should eq("Alice")
-    channel.topic_set_at.should_not be_nil
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.topic.should eq(new_topic)
+      ch.topic_set_by.should eq("Alice")
+      ch.topic_set_at.should_not be_nil
+    end
   end
 
   it "topic setter presist even after user left channel" do
@@ -46,10 +49,13 @@ describe Circed::Actions::Topic do
     domain_channel.remove_member(sender.nickname.to_s)
 
     # Topic should persist
-    channel = get_test_channel(channel_name).not_nil!
-    channel.topic.should eq(new_topic)
-    channel.topic_set_by.should eq("Alice")
-    channel.topic_set_at.should_not be_nil
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.topic.should eq(new_topic)
+      ch.topic_set_by.should eq("Alice")
+      ch.topic_set_at.should_not be_nil
+    end
   end
 
   it "topic setter presist even if user left server" do
@@ -67,13 +73,18 @@ describe Circed::Actions::Topic do
     Circed::Actions::Topic.call(sender, [channel_name, new_topic])
 
     # Remove user from server
-    user_repository.remove_client(sender.nickname.not_nil!)
+    if nickname = sender.nickname
+      user_repository.remove_client(nickname)
+    end
 
     # Topic should persist
-    channel = get_test_channel(channel_name).not_nil!
-    channel.topic.should eq(new_topic)
-    channel.topic_set_by.should eq("Alice")
-    channel.topic_set_at.should_not be_nil
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.topic.should eq(new_topic)
+      ch.topic_set_by.should eq("Alice")
+      ch.topic_set_at.should_not be_nil
+    end
   end
 
   it "returns an error when a non-operator sets a topic" do
@@ -90,10 +101,13 @@ describe Circed::Actions::Topic do
     Circed::Actions::Topic.call(sender, [channel_name, new_topic])
 
     # Topic should not be changed since Alice is not an operator
-    channel = get_test_channel(channel_name).not_nil!
-    channel.topic.should_not eq(new_topic)
-    channel.topic_set_by.should be_nil
-    channel.topic_set_at.should be_nil
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.topic.should_not eq(new_topic)
+      ch.topic_set_by.should be_nil
+      ch.topic_set_at.should be_nil
+    end
   end
 
   it "returns an error for an invalid channel" do
@@ -115,9 +129,12 @@ describe Circed::Actions::Topic do
     Circed::Actions::Topic.call(sender, [channel_name, "new topic"])
 
     # Topic should not be set
-    channel = get_test_channel(channel_name).not_nil!
-    channel.topic.should_not eq("new topic")
-    channel.topic_set_by.should be_nil
-    channel.topic_set_at.should be_nil
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.topic.should_not eq("new topic")
+      ch.topic_set_by.should be_nil
+      ch.topic_set_at.should be_nil
+    end
   end
 end

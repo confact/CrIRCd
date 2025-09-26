@@ -20,8 +20,8 @@ module Circed
       @@last_gc_time = Time.monotonic
 
       # Performance thresholds
-      MAX_BURST_TIME = 5.seconds
-      MAX_MESSAGE_TIME = 100.milliseconds
+      MAX_BURST_TIME    = 5.seconds
+      MAX_MESSAGE_TIME  = 100.milliseconds
       MAX_NETSPLIT_TIME = 10.seconds
 
       # Increment message counter atomically
@@ -50,7 +50,7 @@ module Circed
       end
 
       # Time a block execution and categorize by operation type
-      def self.time_burst(&block)
+      def self.time_burst(&)
         start_time = Time.monotonic
         result = yield
         duration = Time.monotonic - start_time
@@ -66,7 +66,7 @@ module Circed
         result
       end
 
-      def self.time_message_processing(&block)
+      def self.time_message_processing(&)
         start_time = Time.monotonic
         result = yield
         duration = Time.monotonic - start_time
@@ -81,7 +81,7 @@ module Circed
         result
       end
 
-      def self.time_netsplit(&block)
+      def self.time_netsplit(&)
         start_time = Time.monotonic
         result = yield
         duration = Time.monotonic - start_time
@@ -100,13 +100,13 @@ module Circed
       def self.snapshot
         {
           messages_processed: @@message_count.get,
-          active_users: @@user_connections.get,
-          active_servers: @@server_connections.get,
+          active_users:       @@user_connections.get,
+          active_servers:     @@server_connections.get,
           channel_operations: @@channel_operations.get,
-          avg_burst_time: calculate_average(@@burst_times),
-          avg_message_time: calculate_average(@@message_processing_times),
-          avg_netsplit_time: calculate_average(@@netsplit_times),
-          memory_usage: GC.stats.heap_size
+          avg_burst_time:     calculate_average(@@burst_times),
+          avg_message_time:   calculate_average(@@message_processing_times),
+          avg_netsplit_time:  calculate_average(@@netsplit_times),
+          memory_usage:       GC.stats.heap_size,
         }
       end
 
@@ -124,9 +124,9 @@ module Circed
 
       # Check if performance is degraded
       def self.performance_warning? : Bool
-        return true if @@burst_times.any? { |t| t > MAX_BURST_TIME }
-        return true if @@message_processing_times.count { |t| t > MAX_MESSAGE_TIME } > 10
-        return true if @@netsplit_times.any? { |t| t > MAX_NETSPLIT_TIME }
+        return true if @@burst_times.any? { |time| time > MAX_BURST_TIME }
+        return true if @@message_processing_times.count { |time| time > MAX_MESSAGE_TIME } > 10
+        return true if @@netsplit_times.any? { |time| time > MAX_NETSPLIT_TIME }
 
         # Check memory pressure
         current_memory = GC.stats.heap_size
@@ -143,11 +143,11 @@ module Circed
           suggestions << "Consider message batching or async processing"
         end
 
-        if @@burst_times.any? { |t| t > 3.seconds }
+        if @@burst_times.any? { |time| time > 3.seconds }
           suggestions << "Burst protocol may need optimization"
         end
 
-        if GC.stats.heap_size > 100_000_000  # 100MB in bytes
+        if GC.stats.heap_size > 100_000_000 # 100MB in bytes
           suggestions << "Consider periodic cache cleanup"
         end
 

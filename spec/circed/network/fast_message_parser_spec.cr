@@ -99,9 +99,9 @@ describe Circed::Network::FastMessageParser do
 
       # Invalid formats
       Circed::Network::FastMessageParser.valid_format?("").should be_false
-      Circed::Network::FastMessageParser.valid_format?(":" + "a" * 600).should be_false  # Too long
-      Circed::Network::FastMessageParser.valid_format?(":prefix").should be_false  # No command
-      Circed::Network::FastMessageParser.valid_format?("PRIV@MSG").should be_false  # Invalid command chars
+      Circed::Network::FastMessageParser.valid_format?(":" + "a" * 600).should be_false # Too long
+      Circed::Network::FastMessageParser.valid_format?(":prefix").should be_false       # No command
+      Circed::Network::FastMessageParser.valid_format?("PRIV@MSG").should be_false      # Invalid command chars
     end
   end
 
@@ -110,7 +110,7 @@ describe Circed::Network::FastMessageParser do
       lines = [
         "PRIVMSG #channel :Hello",
         ":nick!user@host JOIN #channel",
-        "SQUIT server.irc :Quit message"
+        "SQUIT server.irc :Quit message",
       ]
 
       messages = Circed::Network::FastMessageParser.parse_batch(lines)
@@ -123,14 +123,14 @@ describe Circed::Network::FastMessageParser do
     it "skips invalid messages in batch" do
       lines = [
         "PRIVMSG #channel :Hello",
-        "",  # Invalid
+        "", # Invalid
         ":nick!user@host JOIN #channel",
-        ":",  # Invalid
-        "SQUIT server.irc :Quit message"
+        ":", # Invalid
+        "SQUIT server.irc :Quit message",
       ]
 
       messages = Circed::Network::FastMessageParser.parse_batch(lines)
-      messages.size.should eq(3)  # Only valid messages
+      messages.size.should eq(3) # Only valid messages
     end
   end
 end

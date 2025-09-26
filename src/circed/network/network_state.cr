@@ -43,14 +43,14 @@ module Circed
         getter realname : String
         getter server : String
         getter hopcount : Int32
-        property modes : Set(Char)  # Mutable for mode changes
-        property away_message : String?  # Mutable for away status
+        property modes : Set(Char)      # Mutable for mode changes
+        property away_message : String? # Mutable for away status
         getter connected_at : Time
-        @hostmask : String?  # Cached hostmask
+        @hostmask : String? # Cached hostmask
 
         def initialize(@nickname : String, @username : String, @hostname : String,
                        @realname : String, @server : String, @hopcount : Int32 = 0)
-          @modes = Set(Char).new(initial_capacity: 4)  # Most users have few modes
+          @modes = Set(Char).new(initial_capacity: 4) # Most users have few modes
           @connected_at = Time.utc
           @hostmask = nil
         end
@@ -66,12 +66,12 @@ module Circed
       # Channel information structure - using struct for performance
       struct ChannelInfo
         getter name : String
-        property topic : String?  # Mutable for topic changes
-        property modes : Set(Char)  # Mutable for mode changes
-        property members : Hash(String, Set(Char))  # Mutable for joins/parts
+        property topic : String?                   # Mutable for topic changes
+        property modes : Set(Char)                 # Mutable for mode changes
+        property members : Hash(String, Set(Char)) # Mutable for joins/parts
         getter created_at : Time
-        property topic_set_by : String?  # Mutable for topic updates
-        property topic_set_at : Time?  # Mutable for topic updates
+        property topic_set_by : String? # Mutable for topic updates
+        property topic_set_at : Time?   # Mutable for topic updates
 
         def initialize(@name : String)
           @modes = Set(Char).new
@@ -110,7 +110,7 @@ module Circed
       private def self.notify_netsplit(server_name : String, removed_users : Hash(String, Array(Tuple(String, UserInfo))))
         # Send proper QUIT messages to local users for each removed user
         removed_users.each do |disconnected_server, users|
-          users.each do |(nickname, user_info)|  # Use tuple unpacking
+          users.each do |(nickname, user_info)| # Use tuple unpacking
             send_quit_to_local_users(nickname, user_info, disconnected_server)
           end
         end
@@ -225,7 +225,7 @@ module Circed
         return unless @@users.has_key?(nickname)
 
         # Remove user from all channels efficiently
-        @@channels.each_value { |channel| channel.members.delete(nickname) }
+        @@channels.each_value(&.members.delete(nickname))
 
         # Clean up caches
         @@users.delete(nickname)

@@ -6,10 +6,10 @@ module Circed
       invited_user = receiver
       channel = message[1]
       if channel.starts_with?("#")
-        channel_repository = get_channel_repository
-        if channel_repository.exists?(channel)
-          user_repository = get_user_repository
-          client = user_repository.get_client(invited_user)
+        channel_repo = channel_repository
+        if channel_repo.exists?(channel)
+          user_repo = user_repository
+          client = user_repo.get_client(invited_user)
           if client
             send_to_user(client) do |_receiver, io|
               next if io.nil?

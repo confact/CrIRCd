@@ -3,10 +3,11 @@ require "./base_action"
 module Circed
   class Actions::Away < Actions::BaseAction
     protected def self.execute_action(sender : Client, away_message : String? = nil) : Nil
-      nickname = sender.nickname.not_nil!
+      nickname = sender.nickname
+      return unless nickname
 
-      user_repository = get_user_repository
-      user = user_repository.get(nickname)
+      user_repo = user_repository
+      user = user_repo.get(nickname)
 
       unless user
         Utils::IrcUtils.send_no_such_nick_error(sender, nickname)
@@ -16,7 +17,7 @@ module Circed
       if away_message.nil? || away_message.empty?
         # User is coming back (unaway)
         user.away_message = nil
-        
+
         # Send RPL_UNAWAY
         sender.send_message(
           Server.clean_name,
@@ -24,13 +25,13 @@ module Circed
           nickname,
           ":You are no longer marked as being away"
         )
-        
+
         # Propagate to network
         propagate_away_to_network(sender, nil)
       else
         # User is going away
         user.away_message = away_message
-        
+
         # Send RPL_NOWAWAY
         sender.send_message(
           Server.clean_name,
@@ -38,14 +39,14 @@ module Circed
           nickname,
           ":You have been marked as being away"
         )
-        
+
         # Propagate to network
         propagate_away_to_network(sender, away_message)
       end
 
       # Update user repository
-      user_repository.add(nickname, user)
-      
+      user_repo.add(nickname, user)
+
       # Update network state
       sync_away_with_network(nickname, away_message)
     end
@@ -57,7 +58,7 @@ module Circed
       else
         message = ":#{sender.hostmask} AWAY :#{away_message}"
       end
-      
+
       ServerHandler.servers.each do |server|
         server.safe_send(message)
       end
@@ -70,4 +71,4 @@ module Circed
       end
     end
   end
-end 
+end

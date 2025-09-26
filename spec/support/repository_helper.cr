@@ -30,7 +30,7 @@ module RepositoryHelper
     channel
   end
 
-  def is_user_in_channel?(channel_name : String, user_nickname : String) : Bool
+  def user_in_channel?(channel_name : String, user_nickname : String) : Bool
     if channel = channel_repository.get(channel_name)
       channel.has_member?(user_nickname)
     else

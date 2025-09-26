@@ -55,8 +55,8 @@ module Circed
 
     private def self.determine_connection_type(connection, buffer)
       start_time = Time.utc
-      timeout = 10.seconds  # 10 second timeout
-      
+      timeout = 10.seconds # 10 second timeout
+
       # Read all available commands with a small delay to allow for multiple commands
       loop do
         # Check for timeout
@@ -64,27 +64,27 @@ module Circed
           Log.warn { "Connection type determination timed out" }
           return nil
         end
-        
+
         # Try to read a command
         message = connection.gets.try(&.strip)
         break unless message
-        
+
         buffer << message
         Log.debug { "Read command: #{message}" }
-        
+
         # Check if we have enough information to determine type
         connection_type = detect_connection_type(buffer)
         if connection_type
           Log.debug { "Connection type determined: #{connection_type}" }
           return connection_type
         end
-        
+
         # If we don't have enough info yet, wait a bit for more commands
         # This allows for commands that might be sent with small delays
         sleep(0.1.seconds)
       end
 
-      # If we've read some commands but couldn't determine type, 
+      # If we've read some commands but couldn't determine type,
       # assume it's a client if we have any client-like commands
       if buffer.any? { |cmd| cmd.upcase.starts_with?("NICK") || cmd.upcase.starts_with?("USER") }
         Log.debug { "Assuming client connection based on partial commands" }

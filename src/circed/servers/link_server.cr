@@ -133,32 +133,60 @@ module Circed
 
     private def dispatch_command(payload)
       case payload.command
+      when "ERROR", "PING", "PONG"
+        handle_connection_commands(payload)
+      when "SERVER", "SQUIT"
+        handle_server_commands(payload)
+      when "PRIVMSG", "TOPIC", "AWAY"
+        handle_messaging_commands(payload)
+      when "JOIN", "PART", "QUIT", "NICK", "MODE"
+        handle_user_state_change(payload)
+      when "KILL", "NJOIN"
+        handle_admin_commands(payload)
+      when "EOB", "LINKS", "STATS", "TIME", "VERSION", "ADMIN"
+        Network::BurstProtocol.process_burst_message(payload.command, payload.params, self)
+      else
+        Log.debug { "Unhandled server command: #{payload.command}" }
+      end
+    end
+
+    private def handle_connection_commands(payload)
+      case payload.command
       when "ERROR"
         handle_error(payload)
       when "PING"
         ping(payload.params)
       when "PONG"
         pong(payload.params)
+      end
+    end
+
+    private def handle_server_commands(payload)
+      case payload.command
       when "SERVER"
         handle_server_message(payload)
-      when "PRIVMSG"
-        forward_message_to_peers(payload)
-      when "JOIN", "PART", "QUIT", "NICK", "MODE"
-        handle_user_state_change(payload)
       when "SQUIT"
         Commands::ServerCommands.squit(self, payload.params)
-      when "KILL"
-        Commands::ServerCommands.kill(self, payload.params)
-      when "NJOIN"
-        Commands::ServerCommands.njoin(self, payload.params)
+      end
+    end
+
+    private def handle_messaging_commands(payload)
+      case payload.command
+      when "PRIVMSG"
+        forward_message_to_peers(payload)
       when "TOPIC"
         handle_topic_change(payload)
       when "AWAY"
         handle_away_change(payload)
-      when "EOB", "LINKS", "STATS", "TIME", "VERSION", "ADMIN"
-        Network::BurstProtocol.process_burst_message(payload.command, payload.params, self)
-      else
-        Log.debug { "Unhandled server command: #{payload.command}" }
+      end
+    end
+
+    private def handle_admin_commands(payload)
+      case payload.command
+      when "KILL"
+        Commands::ServerCommands.kill(self, payload.params)
+      when "NJOIN"
+        Commands::ServerCommands.njoin(self, payload.params)
       end
     end
 

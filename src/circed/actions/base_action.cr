@@ -29,7 +29,7 @@ module Circed
 
       # Template method for action-specific validation
       protected def self.validate_action_specific(sender : Client) : Bool
-        true  # Override in subclasses if needed
+        true # Override in subclasses if needed
       end
 
       # Method that must be implemented by subclasses
@@ -38,21 +38,21 @@ module Circed
       end
 
       # Common helper methods
-      protected def self.get_user_repository
+      protected def self.user_repository
         Infrastructure::ServiceLocator.user_repository
       end
 
-      protected def self.get_channel_repository
+      protected def self.channel_repository
         Infrastructure::ServiceLocator.channel_repository
       end
 
-      protected def self.get_notification_service
+      protected def self.notification_service
         Infrastructure::ServiceLocator.notification_service
       end
 
       # Common user validation
       protected def self.validate_user_exists(sender : Client, nickname : String) : Domain::User?
-        user = get_user_repository.get(nickname)
+        user = user_repository.get(nickname)
         unless user
           Utils::IrcUtils.send_no_such_nick_error(sender, nickname)
           return nil
@@ -62,7 +62,7 @@ module Circed
 
       # Common channel validation
       protected def self.validate_channel_exists(sender : Client, channel_name : String) : Domain::Channel?
-        channel = get_channel_repository.get_channel(channel_name)
+        channel = channel_repository.get_channel(channel_name)
         unless channel
           Utils::IrcUtils.send_no_such_channel_error(sender, channel_name)
           return nil
@@ -81,7 +81,9 @@ module Circed
 
       # Check if user has channel privileges
       protected def self.validate_channel_privileges(sender : Client, channel : Domain::Channel, required_mode : Char) : Bool
-        unless Utils::IrcUtils.user_has_channel_mode?(channel, sender.nickname.not_nil!, required_mode)
+        nickname = sender.nickname
+        return false unless nickname
+        unless Utils::IrcUtils.user_has_channel_mode?(channel, nickname, required_mode)
           Utils::IrcUtils.send_not_operator_error(sender, channel.name)
           return false
         end
@@ -107,11 +109,11 @@ module Circed
       protected def self.send_to_user_channel(user : Client, &block : (Client, IO?) -> Void)
         return unless user.nickname
 
-        channel_repository = get_channel_repository
-        user_repository = get_user_repository
+        channel_repo = channel_repository
+        user_repo = user_repository
 
         # Find all channels the user is in
-        user_channels = channel_repository.find_user_channels(user.nickname)
+        user_channels = channel_repo.find_user_channels(user.nickname)
 
         # Collect all unique users from these channels
         unique_users = Set(String).new
@@ -122,7 +124,7 @@ module Circed
 
         # Send to each user
         unique_users.each do |nickname|
-          if client = user_repository.get_client(nickname)
+          if client = user_repo.get_client(nickname)
             block.call(client, client.socket)
           end
         end
@@ -148,7 +150,7 @@ module Circed
       end
 
       protected def self.validate_action_specific(sender : Client) : Bool
-        true  # Channel actions typically don't need extra validation beyond base
+        true # Channel actions typically don't need extra validation beyond base
       end
 
       # Helper to validate channel name format
@@ -158,12 +160,12 @@ module Circed
 
       # Get or create channel (for JOIN-like actions)
       protected def self.get_or_create_channel(channel_name : String) : Domain::Channel
-        channel_repository = get_channel_repository
-        channel = channel_repository.get_channel(channel_name)
+        channel_repo = channel_repository
+        channel = channel_repo.get_channel(channel_name)
 
         unless channel
           channel = Domain::Channel.new(channel_name)
-          channel_repository.add_channel(channel)
+          channel_repo.add_channel(channel)
         end
 
         channel
@@ -179,12 +181,12 @@ module Circed
 
       # Validate target user exists
       protected def self.validate_action_specific(sender : Client) : Bool
-        true  # User actions handle target validation in execute_action
+        true # User actions handle target validation in execute_action
       end
 
       # Helper to check if target user is online
       protected def self.user_online?(nickname : String) : Bool
-        get_user_repository.get_client(nickname) != nil
+        user_repository.get_client(nickname) != nil
       end
     end
   end

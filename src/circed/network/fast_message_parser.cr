@@ -73,48 +73,52 @@ module Circed
       def self.parse(line : String) : ParsedMessage?
         return nil if line.empty?
 
-        # Remove trailing whitespace efficiently
         line = line.rstrip
-
-        # Initialize parsing state
         pos = 0
-        prefix : String? = nil
-        command : String
-        params = [] of String
 
-        # Parse prefix if present (starts with ':')
+        prefix, pos = parse_prefix(line, pos)
+        return nil if pos < 0 || pos >= line.size
+
+        command, pos = parse_command(line, pos)
+        return nil if command.nil? || command.empty?
+
+        params = parse_parameters(line, pos)
+        ParsedMessage.new(prefix, command, params, line)
+      end
+
+      private def self.parse_prefix(line : String, pos : Int32) : {String?, Int32}
         if line.size > 0 && line[0] == ':'
           prefix_end = line.index(' ', pos + 1)
-          return nil unless prefix_end
+          return {nil, -1} unless prefix_end # Return -1 to indicate failure
 
           prefix = line[1...prefix_end]
           pos = prefix_end + 1
+        else
+          prefix = nil
         end
 
         # Skip whitespace
-        while pos < line.size && line[pos] == ' '
-          pos += 1
-        end
-        return nil if pos >= line.size
+        pos = skip_whitespace(line, pos)
+        {prefix, pos}
+      end
 
-        # Parse command (up to first space)
+      private def self.parse_command(line : String, pos : Int32) : {String?, Int32}
         command_start = pos
         while pos < line.size && line[pos] != ' '
           pos += 1
         end
 
         command = line[command_start...pos]
-        return nil if command.empty?
+        {command, pos}
+      end
 
-        # Parse parameters
+      private def self.parse_parameters(line : String, pos : Int32) : Array(String)
+        params = [] of String
+
         while pos < line.size
-          # Skip whitespace
-          while pos < line.size && line[pos] == ' '
-            pos += 1
-          end
+          pos = skip_whitespace(line, pos)
           break if pos >= line.size
 
-          # Check for trailing parameter (starts with ':')
           if line[pos] == ':'
             # Everything from here to end is the trailing parameter
             params << line[pos..-1]
@@ -130,7 +134,14 @@ module Circed
           params << line[param_start...pos]
         end
 
-        ParsedMessage.new(prefix, command, params, line)
+        params
+      end
+
+      private def self.skip_whitespace(line : String, pos : Int32) : Int32
+        while pos < line.size && line[pos] == ' '
+          pos += 1
+        end
+        pos
       end
 
       # Batch parse multiple messages for better performance

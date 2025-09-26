@@ -128,7 +128,7 @@ module Circed
 
       # Query methods
       def find_user_channels(nickname : String) : Array(Domain::Channel)
-        @@channels.values.select { |channel| channel.has_member?(nickname) }
+        @@channels.values.select(&.has_member?(nickname))
       end
 
       def find_channels_with_local_users(user_repository : UserRepository) : Array(Domain::Channel)
@@ -145,7 +145,7 @@ module Circed
         end
       end
 
-      def is_user_in_channel?(channel_name : String, nickname : String) : Bool
+      def user_in_channel?(channel_name : String, nickname : String) : Bool
         get(channel_name).try(&.has_member?(nickname)) || false
       end
 
@@ -157,11 +157,11 @@ module Circed
         end
       end
 
-      def is_user_operator?(channel_name : String, nickname : String) : Bool
+      def user_operator?(channel_name : String, nickname : String) : Bool
         get_user_modes_in_channel(channel_name, nickname).try(&.includes?('o')) || false
       end
 
-      def is_user_voiced?(channel_name : String, nickname : String) : Bool
+      def user_voiced?(channel_name : String, nickname : String) : Bool
         get_user_modes_in_channel(channel_name, nickname).try(&.includes?('v')) || false
       end
 

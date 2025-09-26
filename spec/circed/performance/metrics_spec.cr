@@ -41,7 +41,7 @@ describe Circed::Performance::Metrics do
     it "warns about slow operations" do
       # This would log a warning in real usage
       Circed::Performance::Metrics.time_burst do
-        sleep 6.seconds  # Exceeds MAX_BURST_TIME
+        sleep 6.seconds # Exceeds MAX_BURST_TIME
         "slow_operation"
       end
 
@@ -51,7 +51,7 @@ describe Circed::Performance::Metrics do
 
   describe "connection tracking" do
     it "tracks user connections" do
-      Circed::Performance::Metrics.reset  # Ensure clean state
+      Circed::Performance::Metrics.reset # Ensure clean state
       Circed::Performance::Metrics.increment_user_connections
       Circed::Performance::Metrics.increment_user_connections
       Circed::Performance::Metrics.decrement_user_connections
@@ -61,7 +61,7 @@ describe Circed::Performance::Metrics do
     end
 
     it "tracks server connections" do
-      Circed::Performance::Metrics.reset  # Ensure clean state
+      Circed::Performance::Metrics.reset # Ensure clean state
       Circed::Performance::Metrics.increment_server_connections
       Circed::Performance::Metrics.increment_server_connections
 
@@ -75,12 +75,12 @@ describe Circed::Performance::Metrics do
       # Simulate high message processing time
       50.times do
         Circed::Performance::Metrics.time_message_processing do
-          sleep 25.milliseconds  # Above normal threshold
+          sleep 25.milliseconds # Above normal threshold
         end
       end
 
       suggestions = Circed::Performance::Metrics.optimization_suggestions
-      suggestions.any? { |s| s.includes?("message") && s.includes?("batch") }.should be_true
+      suggestions.any? { |suggestion| suggestion.includes?("message") && suggestion.includes?("batch") }.should be_true
     end
 
     it "detects performance warnings" do

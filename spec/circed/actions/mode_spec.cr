@@ -23,8 +23,9 @@ describe Circed::Actions::Mode do
     Circed::Actions::Mode.call(sender, [channel_name, "+o", "Bob"])
 
     # Check user modes in domain channel
-    channel = get_test_channel(channel_name).not_nil!
-    channel.members["Bob"].includes?('o').should be_true
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    channel.try(&.members["Bob"].includes?('o')).should be_true
   end
 
   it "sets a channel mode" do
@@ -39,8 +40,9 @@ describe Circed::Actions::Mode do
     Circed::Actions::Mode.call(sender, [channel_name, "+m"])
 
     # Check channel modes in domain channel
-    channel = get_test_channel(channel_name).not_nil!
-    channel.modes.includes?('m').should be_true
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    channel.try(&.modes.includes?('m')).should be_true
   end
 
   it "remove a user mode" do
@@ -55,14 +57,19 @@ describe Circed::Actions::Mode do
     domain_channel.add_member(receiver.nickname.to_s)
 
     # Give Bob operator status
-    channel = get_test_channel(channel_name).not_nil!
-    channel.members["Bob"] << 'o'
-    channel.members["Bob"].includes?('o').should be_true
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.members["Bob"] << 'o'
+      ch.members["Bob"].includes?('o').should be_true
+    end
 
     Circed::Actions::Mode.call(sender, [channel_name, "-o", "Bob"])
 
     # Check that operator mode was removed
-    channel.members["Bob"].includes?('o').should be_false
+    if ch = channel
+      ch.members["Bob"].includes?('o').should be_false
+    end
   end
 
   it "remove a channel mode" do
@@ -73,14 +80,19 @@ describe Circed::Actions::Mode do
     domain_channel = create_test_channel(channel_name)
     domain_channel.add_member(sender.nickname.to_s)
     domain_channel.members[sender.nickname.to_s] << 'o' # Make first user operator
-    channel = get_test_channel(channel_name).not_nil!
-    channel.modes << 'm'
-    channel.modes.includes?('m').should be_true
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.modes << 'm'
+      ch.modes.includes?('m').should be_true
+    end
 
     Circed::Actions::Mode.call(sender, [channel_name, "-m"])
 
     # Check that mode was removed
-    channel.modes.includes?('m').should be_false
+    if ch = channel
+      ch.modes.includes?('m').should be_false
+    end
   end
 
   it "returns an error for an invalid channel" do

@@ -6,8 +6,8 @@ module Circed
     # Manages server connections efficiently with automatic cleanup
     class ConnectionPool
       # Connection pool configuration
-      MAX_IDLE_TIME = 30.minutes
-      MAX_CONNECTIONS = 100
+      MAX_IDLE_TIME    = 30.minutes
+      MAX_CONNECTIONS  = 100
       CLEANUP_INTERVAL = 5.minutes
 
       # Connection state tracking
@@ -69,7 +69,7 @@ module Circed
       # Remove a connection from the pool
       def self.remove_connection(server_name : String)
         @@mutex.synchronize do
-          if info = @@connections.delete(server_name)
+          if @@connections.delete(server_name)
             Performance::Metrics.decrement_server_connections
             Log.debug { "Removed connection #{server_name} from pool" }
           end
@@ -108,18 +108,18 @@ module Circed
           total = @@connections.size
           idle_count = @@connections.count { |_, info| info.idle? }
           avg_idle_time = if total > 0
-                           total_idle = @@connections.values.sum(&.idle_time.total_seconds)
-                           (total_idle / total).seconds
-                         else
-                           Time::Span.zero
-                         end
+                            total_idle = @@connections.values.sum(&.idle_time.total_seconds)
+                            (total_idle / total).seconds
+                          else
+                            Time::Span.zero
+                          end
 
           {
-            total_connections: total,
-            idle_connections: idle_count,
+            total_connections:  total,
+            idle_connections:   idle_count,
             active_connections: total - idle_count,
-            average_idle_time: avg_idle_time,
-            max_connections: MAX_CONNECTIONS
+            average_idle_time:  avg_idle_time,
+            max_connections:    MAX_CONNECTIONS,
           }
         end
       end
@@ -173,7 +173,7 @@ module Circed
             if info.server.closed?
               should_remove = true
               Log.debug { "Removing closed connection: #{name}" }
-            # Remove idle connections that exceeded max idle time
+              # Remove idle connections that exceeded max idle time
             elsif info.idle? && info.idle_time > MAX_IDLE_TIME
               should_remove = true
               Log.debug { "Removing idle connection: #{name} (idle for #{info.idle_time})" }

@@ -42,15 +42,17 @@ module Circed
         end
       end
 
-      while !socket.not_nil!.closed?
-        FastIRC.parse(socket.not_nil!) do |payload|
-          run_commands(payload)
-        end
+      if current_socket = socket
+        while !current_socket.closed?
+          FastIRC.parse(current_socket) do |payload|
+            run_commands(payload)
+          end
 
-        if closed?
-          user_repository = Infrastructure::ServiceLocator.user_repository
-          user_repository.remove_client(nickname.to_s) unless nickname.to_s.empty?
-          break
+          if closed?
+            user_repository = Infrastructure::ServiceLocator.user_repository
+            user_repository.remove_client(nickname.to_s) unless nickname.to_s.empty?
+            break
+          end
         end
       end
     rescue e : IO::Error
@@ -68,7 +70,7 @@ module Circed
       user_repository.remove_client(nickname.to_s) unless nickname.to_s.empty?
     end
 
-    def set_user(users_messages : Array(String))
+    def user=(users_messages : Array(String))
       mode = users_messages[1]
       username = users_messages.first
       realname = users_messages[3].sub(":", "")
@@ -118,7 +120,9 @@ module Circed
     end
 
     def send_message_to_receiver(command, sender_nickname, sender_user, sender_host, params : Array(String))
-      send_message_common(command, sender_nickname, sender_user, sender_host, [user.not_nil!.name] + params)
+      if current_user = user
+        send_message_common(command, sender_nickname, sender_user, sender_host, [current_user.name] + params)
+      end
     end
 
     def send_message_to_server(command, sender_nickname, sender_user, sender_host, params : Array(String))
@@ -126,11 +130,12 @@ module Circed
     end
 
     def send_message_common(command, sender_nickname, sender_user, sender_host, params : Array(String))
-      return unless socket
+      current_socket = socket
+      return unless current_socket
 
       update_activity
       prefix = FastIRC::Prefix.new(source: sender_nickname, user: sender_user, host: sender_host)
-      FastIRC::Message.new(command, params, prefix: prefix).to_s(socket.not_nil!)
+      FastIRC::Message.new(command, params, prefix: prefix).to_s(current_socket)
       Log.debug { "sending message to #{sender_nickname}" }
       log_closed_socket_and_exit if closed?
     end
@@ -185,18 +190,57 @@ module Circed
 
     private def run_commands(payload : FastIRC::Message)
       case payload.command
+      when "LIST", "WHOIS", "WHO", "NAMES"
+        handle_query_commands(payload)
+      when "NICK", "USER", "AWAY", "CAP"
+        handle_user_commands(payload)
+      when "PONG", "PING"
+        handle_connection_commands(payload)
+      when "JOIN", "PART", "MODE", "KICK", "TOPIC", "INVITE"
+        handle_channel_commands(payload)
+      when "QUIT", "NOTICE", "PRIVMSG"
+        handle_message_commands(payload)
+      end
+    end
+
+    private def handle_query_commands(payload : FastIRC::Message)
+      case payload.command
       when "LIST"
         Actions::List.call(self)
       when "WHOIS"
-        Actions::Whois.call(self, payload.params.first) if payload.params.any?
+        Actions::Whois.call(self, payload.params.first) unless payload.params.empty?
+      when "WHO"
+        Actions::Who.call(self, payload.params.first) unless payload.params.empty?
+      when "NAMES"
+        Actions::Names.call(self, payload.params.first) unless payload.params.empty?
+      end
+    end
+
+    private def handle_user_commands(payload : FastIRC::Message)
+      case payload.command
       when "NICK"
-        Actions::Nick.call(self, payload.params.first) if payload.params.any?
+        Actions::Nick.call(self, payload.params.first) unless payload.params.empty?
       when "USER"
-        set_user(payload.params)
+        self.user = payload.params
+      when "AWAY"
+        Actions::Away.call(self, payload.params.join(" ")) unless payload.params.empty?
+      when "CAP"
+        return if payload.params.empty?
+        Actions::Cap.call(self, payload.params)
+      end
+    end
+
+    private def handle_connection_commands(payload : FastIRC::Message)
+      case payload.command
       when "PONG"
         pong(payload.params)
       when "PING"
         ping(payload.params)
+      end
+    end
+
+    private def handle_channel_commands(payload : FastIRC::Message)
+      case payload.command
       when "JOIN"
         return if payload.params.empty?
         Actions::Join.call(self, payload.params.first)
@@ -204,9 +248,6 @@ module Circed
         Actions::Part.call(self, payload.params.first)
       when "MODE"
         Actions::Mode.call(self, payload.params)
-      when "QUIT"
-        Actions::Quit.call(self, payload.params.join(" ")) if payload.params.any?
-        quit(payload.params)
       when "KICK"
         Actions::Kick.call(self, payload.params)
       when "TOPIC"
@@ -215,25 +256,25 @@ module Circed
         return if payload.params.size < 2
         invited_user = payload.params.first
         Actions::Invite.call(self, invited_user, payload.params)
+      end
+    end
+
+    private def handle_message_commands(payload : FastIRC::Message)
+      case payload.command
+      when "QUIT"
+        Actions::Quit.call(self, payload.params.join(" ")) unless payload.params.empty?
+        quit(payload.params)
       when "NOTICE"
         notice(payload.params)
       when "PRIVMSG"
         Actions::Privmsg.call(self, payload.params.first, payload.params)
-      when "AWAY"
-        Actions::Away.call(self, payload.params.join(" ")) if payload.params.any?
-      when "CAP"
-        return if payload.params.empty?
-        Actions::Cap.call(self, payload.params)
-      when "WHO"
-        Actions::Who.call(self, payload.params.first) if payload.params.any?
-      when "NAMES"
-        Actions::Names.call(self, payload.params.first) if payload.params.any?
       end
     end
 
     private def get_hostname : String?
-      return "localhost" unless socket
-      Hostname.get_hostname(socket.not_nil!) || "localhost"
+      current_socket = socket
+      return "localhost" unless current_socket
+      Hostname.get_hostname(current_socket) || "localhost"
     end
 
     private def get_hostmask : String?

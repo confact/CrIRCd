@@ -4,22 +4,22 @@ module Circed
     module IrcUtils
       # Common IRC error messages to avoid string duplication
       module ErrorMessages
-        NO_SUCH_NICK = "No such nick"
-        NO_SUCH_CHANNEL = "No such channel"
-        NOT_ON_CHANNEL = "You're not on that channel"
-        NOT_CHANNEL_OPERATOR = "You're not channel operator"
-        BAD_CHANNEL_MASK = "Bad Channel Mask"
-        WRONG_CHANNEL_FORMAT = "Wrong channel format"
-        NOT_REGISTERED = "You have not registered"
-        NICKNAME_IN_USE = "Nickname is already in use"
+        NO_SUCH_NICK           = "No such nick"
+        NO_SUCH_CHANNEL        = "No such channel"
+        NOT_ON_CHANNEL         = "You're not on that channel"
+        NOT_CHANNEL_OPERATOR   = "You're not channel operator"
+        BAD_CHANNEL_MASK       = "Bad Channel Mask"
+        WRONG_CHANNEL_FORMAT   = "Wrong channel format"
+        NOT_REGISTERED         = "You have not registered"
+        NICKNAME_IN_USE        = "Nickname is already in use"
         CANNOT_SEND_TO_CHANNEL = "Cannot send to channel"
-        INVITE_ONLY_CHANNEL = "Channel is invite only"
-        BANNED_FROM_CHANNEL = "You are banned from this channel"
-        CHANNEL_HAS_PASSWORD = "Channel has a password"
-        CHANNEL_IS_FULL = "Channel is full"
-        UNKNOWN_COMMAND = "Unknown command"
-        USER_ON_CHANNEL = "User is already in channel"
-        USERS_DONT_MATCH = "Cannot change mode for other users"
+        INVITE_ONLY_CHANNEL    = "Channel is invite only"
+        BANNED_FROM_CHANNEL    = "You are banned from this channel"
+        CHANNEL_HAS_PASSWORD   = "Channel has a password"
+        CHANNEL_IS_FULL        = "Channel is full"
+        UNKNOWN_COMMAND        = "Unknown command"
+        USER_ON_CHANNEL        = "User is already in channel"
+        USERS_DONT_MATCH       = "Cannot change mode for other users"
       end
 
       # Channel validation utilities
@@ -41,7 +41,7 @@ module Circed
       # Nickname validation utilities
       def self.valid_nickname?(nickname : String) : Bool
         return false if nickname.empty?
-        return false if nickname.size > 30  # RFC limit
+        return false if nickname.size > 30 # RFC limit
 
         # First character must be letter or special char
         first = nickname[0]
@@ -175,15 +175,15 @@ module Circed
       end
 
       # Common repository access helpers
-      def self.get_user_repository
+      def self.user_repository
         Infrastructure::ServiceLocator.user_repository
       end
 
-      def self.get_channel_repository
+      def self.channel_repository
         Infrastructure::ServiceLocator.channel_repository
       end
 
-      def self.get_server_repository
+      def self.server_repository
         Infrastructure::ServiceLocator.server_repository
       end
 

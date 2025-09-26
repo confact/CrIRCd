@@ -41,13 +41,13 @@ describe Circed::Network::BurstProtocol do
       messages = mock_server.sent_messages
 
       # Should send servers
-      messages.any? { |m| m.starts_with?("SERVER existing.irc") }.should be_true
+      messages.any?(&.starts_with?("SERVER existing.irc")).should be_true
 
       # Should send users
-      messages.any? { |m| m.starts_with?("NICK alice") }.should be_true
+      messages.any?(&.starts_with?("NICK alice")).should be_true
 
       # Should send channel joins
-      messages.any? { |m| m.includes?("NJOIN #test") }.should be_true
+      messages.any?(&.includes?("NJOIN #test")).should be_true
 
       # Should end with EOB
       messages.last.should eq("EOB")
@@ -59,14 +59,14 @@ describe Circed::Network::BurstProtocol do
       # Add user with modes
       Circed::Network::NetworkState.add_user("oper", "oper", "admin.host", "Operator", "hub.irc", 0)
       if user = Circed::Network::NetworkState.get_user("oper")
-        user.modes << 'o'  # Operator mode
-        user.modes << 'i'  # Invisible mode
+        user.modes << 'o' # Operator mode
+        user.modes << 'i' # Invisible mode
       end
 
       Circed::Network::BurstProtocol.send_burst(mock_server)
 
       # Check NICK line includes modes
-      nick_message = mock_server.sent_messages.find { |m| m.starts_with?("NICK oper") }
+      nick_message = mock_server.sent_messages.find(&.starts_with?("NICK oper"))
       nick_message.should_not be_nil
       # Modes should be in format: +oi
       nick_message.try(&.includes?("+oi")).should be_true
@@ -87,9 +87,8 @@ describe Circed::Network::BurstProtocol do
 
       Circed::Network::BurstProtocol.send_burst(mock_server)
 
-
       # Should send AWAY message
-      away_message = mock_server.sent_messages.find { |m| m.starts_with?("AWAY afk_user") }
+      away_message = mock_server.sent_messages.find(&.starts_with?("AWAY afk_user"))
       away_message.should_not be_nil
       away_message.try(&.includes?("Gone fishing")).should be_true
     end
@@ -112,7 +111,7 @@ describe Circed::Network::BurstProtocol do
       Circed::Network::BurstProtocol.send_burst(mock_server)
 
       # Should send TOPIC message
-      topic_message = mock_server.sent_messages.find { |m| m.starts_with?("TOPIC #topic_chan") }
+      topic_message = mock_server.sent_messages.find(&.starts_with?("TOPIC #topic_chan"))
       topic_message.should_not be_nil
       topic_message.try(&.includes?("Welcome to the channel!")).should be_true
     end
@@ -144,12 +143,12 @@ describe Circed::Network::BurstProtocol do
       Circed::Network::BurstProtocol.send_burst(mock_server)
 
       # Should send separate NJOIN for each mode group
-      njoin_messages = mock_server.sent_messages.select { |m| m.includes?("NJOIN #modes") }
+      njoin_messages = mock_server.sent_messages.select(&.includes?("NJOIN #modes"))
 
       # Should have messages for ops, voices, and regular users
       njoin_messages.size.should be >= 1
-      njoin_messages.any? { |m| m.includes?("+o") }.should be_true
-      njoin_messages.any? { |m| m.includes?("+v") }.should be_true
+      njoin_messages.any?(&.includes?("+o")).should be_true
+      njoin_messages.any?(&.includes?("+v")).should be_true
     end
 
     it "excludes target server's own users from burst" do
@@ -167,14 +166,14 @@ describe Circed::Network::BurstProtocol do
       Circed::Network::BurstProtocol.send_burst(mock_server)
 
       # Should send local_user but not target_user
-      nick_messages = mock_server.sent_messages.select { |m| m.starts_with?("NICK ") }
-      nick_messages.any? { |m| m.includes?("local_user") }.should be_true
-      nick_messages.any? { |m| m.includes?("target_user") }.should be_false
+      nick_messages = mock_server.sent_messages.select(&.starts_with?("NICK "))
+      nick_messages.any?(&.includes?("local_user")).should be_true
+      nick_messages.any?(&.includes?("target_user")).should be_false
 
       # NJOIN should only include local_user
-      njoin_messages = mock_server.sent_messages.select { |m| m.includes?("NJOIN") }
-      njoin_messages.any? { |m| m.includes?("local_user") }.should be_true
-      njoin_messages.any? { |m| m.includes?("target_user") }.should be_false
+      njoin_messages = mock_server.sent_messages.select(&.includes?("NJOIN"))
+      njoin_messages.any?(&.includes?("local_user")).should be_true
+      njoin_messages.any?(&.includes?("target_user")).should be_false
     end
 
     it "handles empty channels correctly" do
@@ -191,9 +190,9 @@ describe Circed::Network::BurstProtocol do
       Circed::Network::BurstProtocol.send_burst(mock_server)
 
       # Should not send empty channel
-      njoin_messages = mock_server.sent_messages.select { |m| m.includes?("NJOIN") }
-      njoin_messages.any? { |m| m.includes?("#empty") }.should be_false
-      njoin_messages.any? { |m| m.includes?("#populated") }.should be_true
+      njoin_messages = mock_server.sent_messages.select(&.includes?("NJOIN"))
+      njoin_messages.any?(&.includes?("#empty")).should be_false
+      njoin_messages.any?(&.includes?("#populated")).should be_true
     end
   end
 

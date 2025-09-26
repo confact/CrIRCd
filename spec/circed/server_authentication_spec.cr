@@ -113,11 +113,11 @@ describe "Server Authentication Flow" do
         it "requires both NICK and USER commands" do
           buffer_nick_only = ["NICK testuser"]
           type = Circed::Server.detect_connection_type(buffer_nick_only)
-          type.should eq(:client)  # Now accepts single commands
+          type.should eq(:client) # Now accepts single commands
 
           buffer_user_only = ["USER test test localhost :Test"]
           type = Circed::Server.detect_connection_type(buffer_user_only)
-          type.should eq(:client)  # Now accepts single commands
+          type.should eq(:client) # Now accepts single commands
         end
 
         it "detects client type with additional commands" do

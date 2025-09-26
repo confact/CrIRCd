@@ -16,12 +16,12 @@ describe Circed::Actions::Join do
     Circed::Actions::Join.call(sender, channel_name)
 
     # Check that user is in channel
-    is_user_in_channel?(channel_name, "Alice").should be_true
+    user_in_channel?(channel_name, "Alice").should be_true
 
     # Check domain channel directly
     channel = get_test_channel(channel_name)
     channel.should_not be_nil
-    channel.not_nil!.has_member?("Alice").should be_true
+    channel.try(&.has_member?("Alice")).should be_true
   end
 
   it "does not join a user to a private channel" do
@@ -34,7 +34,7 @@ describe Circed::Actions::Join do
 
     Circed::Actions::Join.call(sender, channel_name)
 
-    is_user_in_channel?(channel_name, "Alice").should be_false
+    user_in_channel?(channel_name, "Alice").should be_false
   end
 
   it "joins a user to a password-protected channel with correct password" do
@@ -47,7 +47,7 @@ describe Circed::Actions::Join do
 
     Circed::Actions::Join.call(sender, channel_name, "secret")
 
-    is_user_in_channel?(channel_name, "Alice").should be_true
+    user_in_channel?(channel_name, "Alice").should be_true
   end
 
   it "does not join a user to a password-protected channel with incorrect password" do
@@ -59,11 +59,11 @@ describe Circed::Actions::Join do
     domain_channel.password = "secret"
 
     # Initially not in channel
-    is_user_in_channel?(channel_name, "Alice").should be_false
+    user_in_channel?(channel_name, "Alice").should be_false
 
     Circed::Actions::Join.call(sender, channel_name, "wrong")
 
     # Should still not be in channel due to password validation
-    is_user_in_channel?(channel_name, "Alice").should be_false
+    user_in_channel?(channel_name, "Alice").should be_false
   end
 end

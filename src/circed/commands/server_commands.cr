@@ -20,7 +20,7 @@ module Circed
           forward_to_servers(link_server, "SQUIT", params)
 
           # Remove server from network state (this handles transitive disconnections)
-          Network::NetworkState.remove_server(server_name, send_squit: false)  # Don't send SQUIT again
+          Network::NetworkState.remove_server(server_name, send_squit: false) # Don't send SQUIT again
 
           # If it's our direct connection, close it
           if server_name == link_server.name
@@ -93,53 +93,67 @@ module Circed
 
         case query.downcase
         when "u"
-          # Uptime statistics
-          stats = Network::NetworkState.stats
-          client.send_message(
-            Server.clean_name,
-            "242",
-            client.nickname || "*",
-            ":Server Up: #{Time.utc - Server.start_time}"
-          )
+          send_uptime_stats(client)
         when "l"
-          # Link statistics
-          stats = Network::NetworkState.stats
-          client.send_message(
-            Server.clean_name,
-            "211",
-            client.nickname || "*",
-            "servers",
-            "#{stats[:servers]}",
-            "0",
-            "0",
-            "#{stats[:connections]}"
-          )
+          send_link_stats(client)
         when "m"
-          # Command statistics (simplified)
-          client.send_message(
-            Server.clean_name,
-            "212",
-            client.nickname || "*",
-            "PRIVMSG",
-            "0",
-            "0",
-            "0"
-          )
+          send_command_stats(client)
         when "o"
-          # Operator lines
-          client.send_message(
-            Server.clean_name,
-            "243",
-            client.nickname || "*",
-            "O",
-            "*@*",
-            "operators",
-            "0",
-            "Operator"
-          )
+          send_operator_stats(client)
         end
 
-        # 219 RPL_ENDOFSTATS
+        send_stats_end(client, query)
+      end
+
+      private def self.send_uptime_stats(client : Client)
+        client.send_message(
+          Server.clean_name,
+          "242",
+          client.nickname || "*",
+          ":Server Up: #{Time.utc - Server.start_time}"
+        )
+      end
+
+      private def self.send_link_stats(client : Client)
+        stats = Network::NetworkState.stats
+        client.send_message(
+          Server.clean_name,
+          "211",
+          client.nickname || "*",
+          "servers",
+          "#{stats[:servers]}",
+          "0",
+          "0",
+          "#{stats[:connections]}"
+        )
+      end
+
+      private def self.send_command_stats(client : Client)
+        client.send_message(
+          Server.clean_name,
+          "212",
+          client.nickname || "*",
+          "PRIVMSG",
+          "0",
+          "0",
+          "0"
+        )
+      end
+
+      private def self.send_operator_stats(client : Client)
+        client.send_message(
+          Server.clean_name,
+          "243",
+          client.nickname || "*",
+          "O",
+          "*@*",
+          "operators",
+          "0",
+          "Operator"
+        )
+      end
+
+      private def self.send_stats_end(client : Client, query : String)
         client.send_message(
           Server.clean_name,
           "219",
@@ -217,13 +231,13 @@ module Circed
           nicknames_str = nicknames_str.lstrip(':')
 
           # Split with better performance for large user lists
-          nicknames = nicknames_str.split(limit: 100)  # Reasonable limit for batch joins
+          nicknames = nicknames_str.split(limit: 100) # Reasonable limit for batch joins
 
           # Parse user modes in channel with pre-allocated set
           user_modes = Set(Char).new(initial_capacity: 4)
           if modes_str.starts_with?('+')
             modes_str.each_char_with_index do |char, index|
-              next if index == 0  # Skip the '+'
+              next if index == 0 # Skip the '+'
               user_modes << char
             end
           end

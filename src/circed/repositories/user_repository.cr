@@ -108,7 +108,7 @@ module Circed
       end
 
       def find_users_in_channel(channel_name : String) : Array(Domain::User)
-        @@users.values.select { |user| user.channels.includes?(channel_name) }
+        @@users.values.select(&.channels.includes?(channel_name))
       end
 
       def local_user_count : Int32
