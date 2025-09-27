@@ -1,8 +1,10 @@
 require "tasker"
+require "../network/ssl_socket"
+require "../actions/starttls"
 
 module Circed
   class Client
-    getter socket : IPSocket? = nil
+    property socket : Network::SSLSocket::IRCSocket? = nil
     getter host : String?
     getter nickname : String?
     getter hostmask : String?
@@ -15,11 +17,16 @@ module Circed
 
     @buffer : Array(String) = [] of String
 
-    def initialize(@socket : IPSocket?, buffer)
+    def initialize(@socket : Network::SSLSocket::IRCSocket?, buffer)
       @buffer = buffer
-      if @socket.is_a?(TCPSocket)
-        @host = @socket.try(&.remote_address.to_s)
-      end
+      @host = if sock = @socket
+                case sock
+                when TCPSocket
+                  sock.remote_address.to_s
+                else
+                  "ssl_client"
+                end
+              end
       set_hostmask
       @last_activity = Time.utc
       @signon_time = Time.utc
@@ -194,7 +201,7 @@ module Circed
         handle_query_commands(payload)
       when "NICK", "USER", "AWAY", "CAP"
         handle_user_commands(payload)
-      when "PONG", "PING"
+      when "PONG", "PING", "STARTTLS"
         handle_connection_commands(payload)
       when "JOIN", "PART", "MODE", "KICK", "TOPIC", "INVITE"
         handle_channel_commands(payload)
@@ -236,6 +243,8 @@ module Circed
         pong(payload.params)
       when "PING"
         ping(payload.params)
+      when "STARTTLS"
+        Actions::Starttls.call(self)
       end
     end
 

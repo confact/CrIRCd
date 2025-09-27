@@ -1,4 +1,5 @@
 require "../mixins/unified_messaging"
+require "../network/ssl_socket"
 
 module Circed
   class LinkServer
@@ -8,22 +9,39 @@ module Circed
     getter target_host : String
     getter target_port : Int32
 
-    getter socket : IPSocket? = nil
+    getter socket : Network::SSLSocket::IRCSocket? = nil
 
     @pingpong : Pingpong?
 
     @buffer = [] of String
 
-    def initialize(@name : String, @target_host : String, @target_port : Int32, password : String)
-      @socket = TCPSocket.new(@target_host, @target_port)
+    def initialize(@name : String, @target_host : String, @target_port : Int32, password : String, use_ssl : Bool = false, verify_ssl : Bool = false)
+      # Create TCP connection
+      tcp_socket = TCPSocket.new(@target_host, @target_port)
+
+      # Wrap with SSL if needed
+      @socket = if use_ssl
+                  # Create a minimal SSL config for client connections
+                  ssl_yaml = <<-YAML
+        enabled: true
+        verify_mode: #{verify_ssl}
+        YAML
+                  ssl_config = Config::SSLConfig.from_yaml(ssl_yaml)
+                  context = Network::SSLSocket.create_client_context(ssl_config)
+                  ssl_socket = Network::SSLSocket.wrap_client_socket(tcp_socket, context, @target_host)
+                  Log.info { "Established SSL connection to #{@target_host}:#{@target_port}" }
+                  ssl_socket
+                else
+                  tcp_socket
+                end
+
       handshake(password)
       listen
     end
 
-    def initialize(socket, buffer)
+    def initialize(socket : Network::SSLSocket::IRCSocket, buffer, remote_addr : Socket::IPAddress)
       @socket = socket
       @buffer = buffer
-      remote_addr = socket.remote_address
       @target_host = remote_addr.address
       @target_port = remote_addr.port
       @name = "" # Will be set during authentication

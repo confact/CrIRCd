@@ -1,49 +1,146 @@
-# CrIRCd - IRCD (deamon) in Crystal
+# CrIRCd - IRCD (daemon) in Crystal
 
-This is an crystal IRC server made to follow the spec over time. Right now it is not 100% supporting the spec and is not recommended for production.
+A Crystal IRC server implementation that follows IRC protocol specifications. While not yet 100% spec-compliant, it provides a solid foundation for IRC server functionality.
 
-## What you can do now:
-* let user connect
-* Send MOTD and stats to the user
-* PING/PONG with disconnection after 3 unanswered PINGS.
-* send Peer to peer message between users.
-* channels
-* send messages in channels
-* Kick user from channel
-* invite user to channel
-* set topic in channel
-* make channel private
-* set password on channel
-* set limit on channel
-* set channel as secret
-* able to list channels
-* ban user from channel
-* able to lookup ip and hostname of user
-* whois user
-* logging last active time of user
-* logging signon time of user
+## Features
 
-## Plan to have:
-* chan modes
-* User modes
+### Core IRC Functionality
+* User connections and authentication
+* MOTD and server statistics
+* PING/PONG with automatic disconnection after 3 missed pings
+* Private messages between users
+* Channel support with standard operations:
+  * Join, part, and messaging
+  * Kick and invite users
+  * Topic management
+  * Channel modes (private, secret, password-protected, user limit)
+  * Ban lists
+* User information lookup (IP, hostname, WHOIS)
+* Activity and signon time tracking
+
+### Network & Security
+* **SSL/TLS Support** - Secure connections for clients and servers
+* **Server-to-Server Communication** - Build IRC networks with multiple linked servers
+* **STARTTLS** - Upgrade plain connections to encrypted
+
+### Planned Features
+* Additional channel and user modes
 * GLines support
-* lookup for bans
-* Server OPs
-* SSL TLS support
-* NickServ
-* ChanServ
-* Server-to-server communication
+* Server operators (OPs)
+* NickServ & ChanServ
+* Extended ban lookups
 
 
-## How to run
-Would need crystal >= 1.4 to build this server.
+## Quick Start
 
-1. clone this repo
-2. build the program with: `crystal build --release ./src/circed.cr`
-3. run the program with `./circed` 
+### Requirements
+* Crystal >= 1.4
 
-### Config
-The config is in `config.yml` and is pretty self explanatory. You can change the port, hostname, stats and other things.
+### Installation
+1. Clone this repository
+2. Build the server: `crystal build --release ./src/circed.cr`
+3. Run the server: `./circed`
+
+### Basic Configuration
+The configuration is in `config.yml`. Basic settings include:
+
+```yaml
+host: "0.0.0.0"
+port: 6667
+network: "MyIRCNetwork"
+max_users: 100
+link_password: "server_link_password"
+```
+
+## SSL/TLS Configuration
+
+CrIRCd supports secure connections using SSL/TLS for both clients and server-to-server communication.
+
+### Quick SSL Setup
+
+1. **Generate test certificates:**
+   ```bash
+   ./generate_ssl_certs.sh
+   ```
+
+2. **Enable SSL in config.yml:**
+   ```yaml
+   ssl:
+     enabled: true
+     port: 6697
+     cert_file: "ssl/server.crt"
+     key_file: "ssl/server.key"
+     starttls: true
+   ```
+
+3. **Start the server and connect:**
+   ```bash
+   ./circed config.yml
+
+   # Connect with SSL client
+   openssl s_client -connect localhost:6697
+   ```
+
+### Advanced SSL Configuration
+
+For production deployments with certificate verification:
+
+```yaml
+ssl:
+  enabled: true
+  port: 6697
+  cert_file: "/path/to/server.crt"
+  key_file: "/path/to/server.key"
+  ca_file: "/path/to/ca.crt"        # For client cert verification
+  verify_mode: true                 # Verify client certificates
+  starttls: true                    # Allow STARTTLS upgrade
+  require_ssl_for_servers: false    # Require SSL for server links
+```
+
+### Server-to-Server SSL
+
+Configure encrypted server links:
+
+```yaml
+linked_servers:
+  - host: "irc2.example.com"
+    port: 6697
+    link_password: "secure_password"
+    use_ssl: true
+    verify_ssl: true  # Verify server certificate
+```
+
+### Client Connection Methods
+
+**Direct SSL Connection (Port 6697):**
+```bash
+# IRC clients
+irssi -c irc.example.com -p 6697 --ssl
+
+# Testing with OpenSSL
+openssl s_client -connect localhost:6697
+```
+
+**STARTTLS Upgrade (Port 6667):**
+```
+STARTTLS
+# Server responds: 670 :STARTTLS successful, proceed with TLS handshake
+# Client performs TLS handshake
+```
+
+### SSL Security Features
+
+* **Modern TLS:** TLS 1.2+ only (SSLv2, SSLv3, TLS 1.0/1.1 disabled)
+* **Secure Ciphers:** ECDHE+AESGCM, ECDHE+CHACHA20, DHE+AESGCM
+* **Certificate Verification:** Optional mutual TLS with client certificates
+* **STARTTLS Support:** RFC-compliant connection upgrade
+
+### Production SSL Considerations
+
+1. **Use Valid Certificates:** Obtain from trusted CA (Let's Encrypt recommended)
+2. **Secure Key Storage:** Set appropriate file permissions (600 for private keys)
+3. **Certificate Renewal:** Implement automatic renewal processes
+4. **Monitoring:** Log SSL handshake success/failures for security monitoring
 
 ## Known issues
 * NAMES list of users in channel is not working correctly

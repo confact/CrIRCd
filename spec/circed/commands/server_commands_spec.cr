@@ -4,7 +4,8 @@ def create_link_server
   socket = DummySocket.new
   socket.add_receive_data("PASS testpass")
   socket.add_receive_data("SERVER test.server 1 :Test Server")
-  Circed::LinkServer.new(socket, ["PASS testpass", "SERVER test.server 1 :Test Server"])
+  remote_addr = Socket::IPAddress.new("127.0.0.1", 12345)
+  Circed::LinkServer.new(socket.as(Circed::Network::SSLSocket::IRCSocket), ["PASS testpass", "SERVER test.server 1 :Test Server"], remote_addr)
 end
 
 describe Circed::Commands::ServerCommands do
@@ -124,7 +125,7 @@ describe Circed::Commands::ServerCommands do
   describe "INFO commands" do
     describe "basic command execution" do
       it "executes without crashing" do
-        client = Circed::Client.new(DummySocket.new, [] of String)
+        client = Circed::Client.new(DummySocket.new.as(Circed::Network::SSLSocket::IRCSocket), [] of String)
         client.nickname = "testuser"
 
         # Test all commands don't crash
