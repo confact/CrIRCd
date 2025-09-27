@@ -239,6 +239,12 @@ module Circed
     private def self.initialize_container
       return if @@container_initialized
       Infrastructure::Container.setup_default_services(config)
+
+      # Initialize IRC Services Hub
+      if config.services_server?
+        Services::ServicesHub.become_services_server
+      end
+
       @@container_initialized = true
       Log.info { "Dependency injection container initialized" }
     end

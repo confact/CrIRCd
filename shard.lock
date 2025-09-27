@@ -12,6 +12,10 @@ shards:
     git: https://github.com/kostya/cron_parser.git
     version: 0.4.0
 
+  db:
+    git: https://github.com/crystal-lang/crystal-db.git
+    version: 0.14.0
+
   durian:
     git: https://github.com/636f7374/durian.cr.git
     version: 0.1.5
@@ -27,6 +31,10 @@ shards:
   ipaddress:
     git: https://github.com/64726f70/ipaddress.cr.git
     version: 1.0.0
+
+  sqlite3:
+    git: https://github.com/crystal-lang/crystal-sqlite3.git
+    version: 0.22.0
 
   tasker:
     git: https://github.com/spider-gazelle/tasker.git

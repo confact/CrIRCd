@@ -45,6 +45,31 @@ module Circed
         register(Services::NotificationService, notification_service)
         register(Services::IRCService, irc_service)
       end
+
+      # Convenience methods for accessing common services
+      def self.user_repository : Repositories::UserRepository
+        resolve(Repositories::UserRepository)
+      end
+
+      def self.channel_repository : Repositories::ChannelRepository
+        resolve(Repositories::ChannelRepository)
+      end
+
+      def self.server_repository : Repositories::ServerRepository
+        resolve(Repositories::ServerRepository)
+      end
+
+      def self.irc_service : Services::IRCService
+        resolve(Services::IRCService)
+      end
+
+      def self.authentication_service : Services::AuthenticationService
+        resolve(Services::AuthenticationService)
+      end
+
+      def self.notification_service : Services::NotificationService
+        resolve(Services::NotificationService)
+      end
     end
 
     # Service locator for backward compatibility during migration
