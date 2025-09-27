@@ -7,22 +7,22 @@ module Circed
       @@servers = Hash(String, Domain::Server).new
       @@topology = Hash(String, Set(String)).new # server -> connected servers
 
-      def add(name : String, server : Domain::Server) : Void
-        @@servers[name] = server
-        @@topology[name] ||= Set(String).new
+      def add(id : String, entity : Domain::Server) : Void
+        @@servers[id] = entity
+        @@topology[id] ||= Set(String).new
       end
 
-      def get(name : String) : Domain::Server?
-        @@servers[name]?
+      def get(id : String) : Domain::Server?
+        @@servers[id]?
       end
 
-      def remove(name : String) : Bool
-        removed_server = @@servers.delete(name)
-        @@topology.delete(name)
+      def remove(id : String) : Bool
+        removed_server = @@servers.delete(id)
+        @@topology.delete(id)
 
         # Remove from other servers' topology
         @@topology.each do |_, connections|
-          connections.delete(name)
+          connections.delete(id)
         end
 
         !removed_server.nil?

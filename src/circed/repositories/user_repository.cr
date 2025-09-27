@@ -7,17 +7,17 @@ module Circed
       @@users = Hash(String, Domain::User).new
       @@clients = Hash(String, Client).new # Maps nickname to local client connection
 
-      def add(nickname : String, user : Domain::User) : Void
-        @@users[nickname] = user
+      def add(id : String, entity : Domain::User) : Void
+        @@users[id] = entity
       end
 
-      def get(nickname : String) : Domain::User?
-        @@users[nickname]?
+      def get(id : String) : Domain::User?
+        @@users[id]?
       end
 
-      def remove(nickname : String) : Bool
-        removed = @@users.delete(nickname)
-        @@clients.delete(nickname)
+      def remove(id : String) : Bool
+        removed = @@users.delete(id)
+        @@clients.delete(id)
         !removed.nil?
       end
 
