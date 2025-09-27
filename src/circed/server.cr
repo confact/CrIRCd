@@ -145,10 +145,10 @@ module Circed
         sleep(0.1.seconds)
       end
 
-      # If we've read some commands but couldn't determine type,
-      # assume it's a client if we have any client-like commands
-      if buffer.any? { |cmd| cmd.upcase.starts_with?("NICK") || cmd.upcase.starts_with?("USER") }
-        Log.debug { "Assuming client connection based on partial commands" }
+      # If we've read any commands but couldn't determine type, assume client.
+      # Client command processing will handle registration checks and errors.
+      if buffer.any?
+        Log.debug { "Defaulting to client connection (no PASS/SERVER detected)" }
         return :client
       end
 

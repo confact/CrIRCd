@@ -83,6 +83,21 @@ module Circed
       realname = users_messages[3].sub(":", "")
       @user = User.new(self, mode, username, realname)
       Log.debug { "Set user to: #{user}" }
+
+      # Create domain user in repository if we have a nickname
+      if nickname = @nickname
+        hostname = @host || "localhost"
+        domain_user = Domain::User.new(
+          nickname,
+          username,
+          hostname,
+          realname,
+          Server.config.host
+        )
+        user_repo = Infrastructure::ServiceLocator.user_repository
+        user_repo.add(nickname, domain_user)
+      end
+
       Circed::Server.welcome_message(self)
       @pingpong = Pingpong.new(self)
     end
@@ -103,12 +118,14 @@ module Circed
       return log_closed_socket_and_exit if closed?
 
       socket.try(&.puts(message + "\n"))
+      socket.try(&.flush)
     end
 
     def send_error(message)
       Log.info { "Sending ERROR to #{@nickname}: #{message}" }
       return if closed?
       socket.try(&.puts("ERROR :#{message}\n"))
+      socket.try(&.flush)
     end
 
     def notice(message)
@@ -145,6 +162,7 @@ module Circed
       FastIRC::Message.new(command, params, prefix: prefix).to_s(current_socket)
       Log.debug { "sending message to #{sender_nickname}" }
       log_closed_socket_and_exit if closed?
+      current_socket.flush
     end
 
     def close
@@ -207,6 +225,9 @@ module Circed
         handle_channel_commands(payload)
       when "QUIT", "NOTICE", "PRIVMSG"
         handle_message_commands(payload)
+      else
+        # Unknown command
+        send_message(Server.clean_name, Numerics::ERR_UNKNOWNCOMMAND, nickname || "*", payload.command, ":#{Utils::IrcUtils::ErrorMessages::UNKNOWN_COMMAND}")
       end
     end
 
@@ -226,7 +247,12 @@ module Circed
     private def handle_user_commands(payload : FastIRC::Message)
       case payload.command
       when "NICK"
-        Actions::Nick.call(self, payload.params.first) unless payload.params.empty?
+        if payload.params.size != 1
+          # Invalid nickname format (e.g., contains spaces or missing param)
+          send_message(Server.clean_name, Numerics::ERR_ERRONEUSNICKNAME, payload.params.first? || "*", ":Erroneous nickname")
+          return
+        end
+        Actions::Nick.call(self, payload.params.first)
       when "USER"
         self.user = payload.params
       when "AWAY"
@@ -249,22 +275,49 @@ module Circed
     end
 
     private def handle_channel_commands(payload : FastIRC::Message)
+      # Require registration before channel commands
+      unless nickname && user
+        send_message(Server.clean_name, Numerics::ERR_NOTREGISTERED, nickname || "*", ":You have not registered")
+        return
+      end
       case payload.command
       when "JOIN"
-        return if payload.params.empty?
+        if payload.params.empty?
+          # Need more params
+          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "JOIN", ":Not enough parameters")
+          return
+        end
         Actions::Join.call(self, payload.params.first)
       when "PART"
-        Actions::Part.call(self, payload.params.first)
+        if payload.params.empty?
+          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "PART", ":Not enough parameters")
+          return
+        end
+        channel_name = payload.params.first
+        reason = payload.params.size > 1 ? payload.params[1].lchop(':') : nil
+        Actions::Part.call(self, channel_name, reason)
       when "MODE"
         Actions::Mode.call(self, payload.params)
       when "KICK"
+        if payload.params.size < 2
+          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "KICK", ":Not enough parameters")
+          return
+        end
         Actions::Kick.call(self, payload.params)
       when "TOPIC"
+        if payload.params.empty?
+          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "TOPIC", ":Not enough parameters")
+          return
+        end
         Actions::Topic.call(self, payload.params)
       when "INVITE"
-        return if payload.params.size < 2
+        if payload.params.size < 2
+          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "INVITE", ":Not enough parameters")
+          return
+        end
         invited_user = payload.params.first
-        Actions::Invite.call(self, invited_user, payload.params)
+        channel_name = payload.params[1]
+        Actions::Invite.call(self, invited_user, channel_name)
       end
     end
 
@@ -274,9 +327,21 @@ module Circed
         Actions::Quit.call(self, payload.params.join(" ")) unless payload.params.empty?
         quit(payload.params)
       when "NOTICE"
-        notice(payload.params)
+        if payload.params.size < 2
+          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "NOTICE", ":Not enough parameters")
+          return
+        end
+        target = payload.params.first
+        message = payload.params[1..-1].join(" ")
+        Actions::Notice.call(self, target, message)
       when "PRIVMSG"
-        Actions::Privmsg.call(self, payload.params.first, payload.params)
+        if payload.params.size < 2
+          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "PRIVMSG", ":Not enough parameters")
+          return
+        end
+        target = payload.params.first
+        message = payload.params[1..-1].join(" ")
+        Actions::Privmsg.call(self, target, message)
       end
     end
 

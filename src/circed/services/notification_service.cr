@@ -104,6 +104,23 @@ module Circed
         end
       end
 
+      def notify_channel_notice(sender : String, channel_name : String, message_text : String)
+        if user = @user_repository.get(sender)
+          message = ":#{user.hostmask} NOTICE #{channel_name} :#{message_text}"
+          send_to_channel_members(channel_name, message, sender)
+        end
+      end
+
+      def notify_private_notice(sender : String, target : String, message_text : String)
+        if user = @user_repository.get(sender)
+          message = ":#{user.hostmask} NOTICE #{target} :#{message_text}"
+
+          if client = @user_repository.get_client(target)
+            client.send_message(message)
+          end
+        end
+      end
+
       def notify_netsplit(affected_users : Array(Domain::User), reason : String)
         affected_users.each do |user|
           quit_message = ":#{user.hostmask} QUIT :#{reason}"

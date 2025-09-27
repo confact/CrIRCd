@@ -79,7 +79,7 @@ describe "Message Routing Integration" do
   describe "cross-server message routing" do
     it "routes private messages across server links" do
       env.setup_linked_servers(ssl_enabled: true)
-      sleep 2
+      sleep 2.seconds
 
       alice = env.create_client("Alice", port: 16697) # Server 1
       bob = env.create_client("Bob", port: 17697)     # Server 2
@@ -97,7 +97,7 @@ describe "Message Routing Integration" do
 
     it "routes channel messages across server links" do
       env.setup_linked_servers(ssl_enabled: true)
-      sleep 2
+      sleep 2.seconds
 
       # Users on different servers
       alice = env.create_client("Alice", port: 16697)
@@ -110,7 +110,7 @@ describe "Message Routing Integration" do
         client.join("#distributed")
       end
 
-      sleep 0.5
+      sleep 0.5.seconds
 
       # Alice sends message
       alice.privmsg("#distributed", "Message across servers")
@@ -125,7 +125,7 @@ describe "Message Routing Integration" do
 
     it "doesn't create message loops" do
       env.setup_linked_servers(ssl_enabled: true)
-      sleep 2
+      sleep 2.seconds
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -136,7 +136,7 @@ describe "Message Routing Integration" do
       alice.join("#noloop")
       bob.join("#noloop")
 
-      sleep 0.5
+      sleep 0.5.seconds
 
       # Send message and count how many times it's received
       alice.privmsg("#noloop", "Loop test message")
@@ -145,7 +145,7 @@ describe "Message Routing Integration" do
       assert_message_received(bob, "Loop test message", "Alice")
 
       # Give time for any potential loops
-      sleep 1
+      sleep 1.second
 
       # Should not receive duplicate
       bob.should_not_receive(/Loop test message/, timeout: 0.5.seconds)
@@ -174,7 +174,7 @@ describe "Message Routing Integration" do
 
     it "routes channel NOTICE across servers" do
       env.setup_linked_servers(ssl_enabled: true)
-      sleep 2
+      sleep 2.seconds
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -213,7 +213,7 @@ describe "Message Routing Integration" do
 
     it "routes CTCP across servers" do
       env.setup_linked_servers(ssl_enabled: true)
-      sleep 2
+      sleep 2.seconds
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -233,7 +233,7 @@ describe "Message Routing Integration" do
   describe "server command routing" do
     it "routes NICK changes across servers" do
       env.setup_linked_servers(ssl_enabled: true)
-      sleep 2
+      sleep 2.seconds
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -257,7 +257,7 @@ describe "Message Routing Integration" do
 
     it "routes QUIT messages across servers" do
       env.setup_linked_servers(ssl_enabled: true)
-      sleep 2
+      sleep 2.seconds
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -271,7 +271,7 @@ describe "Message Routing Integration" do
       bob.join("#quits")
       charlie.join("#quits")
 
-      sleep 0.5
+      sleep 0.5.seconds
 
       # Alice quits
       alice.quit("Goodbye everyone!")
@@ -286,7 +286,7 @@ describe "Message Routing Integration" do
 
     it "routes JOIN/PART across servers" do
       env.setup_linked_servers(ssl_enabled: true)
-      sleep 2
+      sleep 2.seconds
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -341,7 +341,7 @@ describe "Message Routing Integration" do
 
     it "handles routing when server link is down" do
       env.setup_linked_servers(ssl_enabled: true)
-      sleep 2
+      sleep 2.seconds
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)

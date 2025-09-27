@@ -1,0 +1,30 @@
+# IRC Server Configuration with Services
+host: "services.irc.network.com"
+port: 6667
+network: "ExampleNet"
+max_users: 1000
+link_password: "linking_password"
+server_password: "optional_server_password"
+services_server: true  # This server will host ChanServ and UserServ
+
+# SSL Configuration
+ssl:
+  enabled: true
+  port: 6697
+  starttls: true
+  # cert_file: "/path/to/cert.pem"
+  # key_file: "/path/to/key.pem"
+  verify_mode: false
+
+# Linked servers in the network
+linked_servers:
+  - host: "hub.irc.network.com"
+    port: 6667
+    link_password: "linking_password"
+    use_ssl: false
+    verify_ssl: false
+  - host: "leaf1.irc.network.com"
+    port: 6667
+    link_password: "linking_password"
+    use_ssl: false
+    verify_ssl: false

@@ -21,16 +21,25 @@ describe "Basic Connectivity" do
 
     # Read responses - should get welcome messages
     sleep 1.second
-    responses = [] of String?
+    responses = [] of String
+    socket.read_timeout = 1.second
+
     5.times do
-      if line = socket.gets(chomp: false)
-        responses << line
-        puts "Response: #{line.inspect}"
+      begin
+        if line = socket.gets(chomp: false)
+          responses << line
+          puts "Response: #{line.inspect}"
+        else
+          break
+        end
+      rescue IO::TimeoutError
+        puts "Timeout reading response"
+        break
       end
     end
 
     responses.should_not be_empty
-    responses.any? { |response| response && response.includes?("001") }.should be_true
+    responses.any? { |response| response.includes?("001") }.should be_true
 
     socket.close
   end

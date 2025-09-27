@@ -2,7 +2,18 @@ require "./base_action"
 
 module Circed
   class Actions::Nick < Actions::BaseAction
+    # Override validation since NICK can be used before registration is complete
+    protected def self.validate_sender(sender : Client) : Bool
+      true # NICK is allowed even if nickname is not yet set
+    end
+
     protected def self.execute_action(sender : Client, new_nickname : String) : Nil
+      # Validate nickname format first
+      unless Utils::IrcUtils.valid_nickname?(new_nickname)
+        sender.send_message(Server.clean_name, Numerics::ERR_ERRONEUSNICKNAME, new_nickname, ":Erroneous nickname")
+        return
+      end
+
       old_nickname = sender.nickname
 
       # Check if nickname is already in use (local or remote)

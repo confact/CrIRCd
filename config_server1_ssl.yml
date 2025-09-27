@@ -1,0 +1,26 @@
+host: "0.0.0.0"
+port: 6667
+network: "TestSSLNetwork"
+max_users: 100
+link_password: "test_ssl_link_password"
+server_password: null
+server_name: "irc1.test.local"
+
+# SSL/TLS Configuration
+ssl:
+  enabled: true
+  port: 6697
+  cert_file: "ssl/server1/server.crt"
+  key_file: "ssl/server1/server.key"
+  ca_file: "ssl/ca/ca.crt"
+  verify_mode: false
+  starttls: true
+  require_ssl_for_servers: false
+
+# Linked servers configuration - Server 2
+linked_servers:
+  - host: "localhost"
+    port: 7697
+    link_password: "test_ssl_link_password"
+    use_ssl: true
+    verify_ssl: false

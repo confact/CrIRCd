@@ -1,0 +1,31 @@
+host: "0.0.0.0"
+port: 6667
+network: "MyIRCNetwork"
+max_users: 100
+link_password: "secure_link_password_here"
+server_password: null
+
+# SSL/TLS Configuration
+ssl:
+  enabled: true
+  port: 6697
+  cert_file: "/path/to/server.crt"
+  key_file: "/path/to/server.key"
+  ca_file: "/path/to/ca.crt"  # Optional, for client certificate verification
+  verify_mode: false           # Set to true to verify client certificates
+  starttls: true               # Allow STARTTLS upgrade on plain connections
+  require_ssl_for_servers: false  # Set to true to require SSL for server links
+
+# Linked servers configuration
+linked_servers:
+  - host: "irc2.example.com"
+    port: 6667
+    link_password: "server2_password"
+    use_ssl: false
+    verify_ssl: false
+
+  - host: "irc3.example.com"
+    port: 6697
+    link_password: "server3_password"
+    use_ssl: true
+    verify_ssl: true  # Verify the remote server's certificate

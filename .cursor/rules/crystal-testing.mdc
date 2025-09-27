@@ -1,0 +1,267 @@
+---
+globs: "*_spec.cr"
+description: "Crystal IRC server testing patterns and conventions"
+---
+
+# Crystal IRC Server Testing Guide
+
+You are an expert in Crystal testing, specifically for IRC server applications.
+
+## Test File Structure
+
+### File Organization
+- Test files must end with `_spec.cr`
+- Mirror the source directory structure in `spec/`
+- Place test helpers in `spec/support/`
+
+### Test Layout
+```crystal
+require "../../spec_helper"
+
+describe Circed::Actions::CommandName do
+  before_each do
+    clear_repositories
+  end
+
+  after_each do
+    clear_repositories
+  end
+
+  it "performs expected action" do
+    # Test implementation
+  end
+end
+```
+
+## Test Helpers
+
+### Repository Management
+Always use repository helpers from [spec/support/repository_helper.cr](mdc:spec/support/repository_helper.cr):
+- `clear_repositories` - Clean all repositories between tests
+- `user_repository` - Access user repository
+- `channel_repository` - Access channel repository
+
+### Test Object Creation
+Use these helpers for consistent test objects:
+- `create_test_client(nickname)` - Create IRC client
+- `create_test_channel(name)` - Create IRC channel
+- `create_test_channel_with_user(channel_name, user_nickname, operator: false)` - Create channel with user
+
+## IRC Testing Patterns
+
+### Client Testing
+```crystal
+it "handles IRC command" do
+  client = create_test_client("test_user")
+  
+  # Test command execution
+  Circed::Actions::CommandName.call(client, "param1", "param2")
+  
+  # Assert expected behavior
+  client.nickname.should eq("test_user")
+end
+```
+
+### Channel Testing
+```crystal
+it "manages channel operations" do
+  channel = create_test_channel("#test")
+  client = create_test_client("user1")
+  
+  # Test channel operations
+  channel.add_member("user1")
+  
+  # Assert channel state
+  channel.has_member?("user1").should be_true
+end
+```
+
+### Repository Testing
+```crystal
+it "persists data correctly" do
+  user = create_test_client("test_user")
+  user_repository.add_client(user)
+  
+  # Test repository operations
+  found_user = user_repository.get_client("test_user")
+  found_user.should_not be_nil
+end
+```
+
+## Mock Objects
+
+### DummySocket
+Use [spec/support/dummy_socket.cr](mdc:spec/support/dummy_socket.cr) for network testing:
+```crystal
+socket = DummySocket.new
+socket.add_message("NICK test_user")
+socket.add_message("USER test test localhost :Test User")
+```
+
+### Connection Testing
+```crystal
+it "handles connection properly" do
+  socket = DummySocket.new
+  buffer = ["NICK test", "USER test test localhost :Test User"]
+  client = Circed::Client.new(socket, buffer)
+  
+  # Test connection handling
+  client.setup
+  
+  # Assert connection state
+  client.nickname.should eq("test")
+end
+```
+
+## Test Scenarios
+
+### Authentication Testing
+```crystal
+describe "authentication" do
+  it "validates server credentials" do
+    credentials = Circed::Services::ServerCredentials.new("test.server", "password")
+    service = Circed::Services::AuthenticationService.new(Server.config)
+    
+    result = service.authenticate(credentials)
+    result.should eq(Circed::Core::AuthenticationResult::Success)
+  end
+end
+```
+
+### Error Handling Testing
+```crystal
+it "handles invalid input gracefully" do
+  client = create_test_client("test_user")
+  
+  # Test error conditions
+  expect_raises(Exception) do
+    Circed::Actions::CommandName.call(client, "invalid_param")
+  end
+end
+```
+
+### State Management Testing
+```crystal
+it "maintains consistent state" do
+  client1 = create_test_client("user1")
+  client2 = create_test_client("user2")
+  channel = create_test_channel("#test")
+  
+  # Test state changes
+  channel.add_member("user1")
+  channel.add_member("user2")
+  
+  # Assert state consistency
+  channel.member_count.should eq(2)
+  channel.has_member?("user1").should be_true
+  channel.has_member?("user2").should be_true
+end
+```
+
+## Network Testing
+
+### Server-to-Server Testing
+```crystal
+describe "server linking" do
+  it "establishes server connections" do
+    socket = DummySocket.new
+    buffer = ["PASS password", "SERVER test.server 1 :Test Server"]
+    link_server = Circed::LinkServer.new(socket, buffer)
+    
+    # Test server connection
+    link_server.name.should eq("test.server")
+  end
+end
+```
+
+### Network State Testing
+```crystal
+it "maintains network topology" do
+  Circed::Network::NetworkState.add_server("server1", 1, "Test Server 1")
+  Circed::Network::NetworkState.add_server("server2", 2, "Test Server 2")
+  
+  # Test network state
+  servers = Circed::Network::NetworkState.servers
+  servers.size.should eq(2)
+end
+```
+
+## Performance Testing
+
+### Load Testing
+```crystal
+it "handles multiple clients" do
+  clients = Array(Circed::Client).new
+  
+  (1..100).each do |i|
+    client = create_test_client("user#{i}")
+    clients << client
+  end
+  
+  # Test server load
+  clients.size.should eq(100)
+  user_repository.size.should eq(100)
+end
+```
+
+### Memory Testing
+```crystal
+it "cleans up resources" do
+  client = create_test_client("test_user")
+  user_repository.add_client(client)
+  
+  # Test cleanup
+  user_repository.remove_client("test_user")
+  user_repository.get_client("test_user").should be_nil
+end
+```
+
+## Test Data Management
+
+### Consistent Test Data
+```crystal
+def setup_test_network
+  # Create consistent test environment
+  server = create_test_server("test.server")
+  channel = create_test_channel("#general")
+  user = create_test_client("admin")
+  
+  # Setup relationships
+  channel.add_member("admin")
+  channel.members["admin"] << 'o'  # Make operator
+  
+  {server, channel, user}
+end
+```
+
+### Test Cleanup
+```crystal
+after_each do
+  # Always clean up after tests
+  clear_repositories
+  Circed::Network::NetworkState.clear_all_state
+end
+```
+
+## Best Practices
+
+### Test Organization
+- Group related tests in `describe` blocks
+- Use descriptive test names
+- Test both success and failure cases
+- Include edge cases and boundary conditions
+
+### Assertion Patterns
+- Use specific assertions: `should eq(expected)` over `should be_truthy`
+- Test state changes explicitly
+- Verify side effects (messages sent, state updated)
+
+### Test Isolation
+- Each test should be independent
+- Use `before_each` and `after_each` for setup/cleanup
+- Don't rely on test execution order
+
+### Documentation
+- Include context in test descriptions
+- Comment complex test setups
+- Document expected behavior in test names
