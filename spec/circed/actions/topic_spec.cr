@@ -2,83 +2,112 @@ require "../../spec_helper"
 
 describe Circed::Actions::Topic do
   before_each do
-    Circed::UserHandler.clear
-    Circed::ChannelHandler.clear
+    clear_repositories
   end
 
   after_each do
-    Circed::UserHandler.clear
-    Circed::ChannelHandler.clear
+    clear_repositories
   end
 
   it "sets a channel topic by an operator" do
     sender = create_test_client("Alice")
     channel_name = "#test"
-    channel = Circed::Channel.new(channel_name)
-    channel.add_client(sender)
-    Circed::ChannelHandler.add_channel(channel)
+
+    # Add user to channel (first user gets operator status)
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.add_member(sender.nickname.to_s)
+    domain_channel.members[sender.nickname.to_s] << 'o' # Make first user operator
 
     new_topic = "new topic"
     Circed::Actions::Topic.call(sender, [channel_name, new_topic])
 
-    channel.topic.should eq(new_topic)
-    channel.topic_setter.should eq(channel.find_user(sender))
-    channel.topic_set_at.should_not be_nil
+    # Check domain channel directly
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.topic.should eq(new_topic)
+      ch.topic_set_by.should eq("Alice")
+      ch.topic_set_at.should_not be_nil
+    end
   end
 
   it "topic setter presist even after user left channel" do
     sender = create_test_client("Alice")
     other_user = create_test_client("Bob")
     channel_name = "#test"
-    channel = Circed::Channel.new(channel_name)
-    channel.add_client(sender)
-    channel.add_client(other_user)
-    Circed::ChannelHandler.add_channel(channel)
+
+    # Add users to channel
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.add_member(sender.nickname.to_s)
+    domain_channel.members[sender.nickname.to_s] << 'o' # Make first user operator
+    domain_channel.add_member(other_user.nickname.to_s)
 
     new_topic = "new topic"
     Circed::Actions::Topic.call(sender, [channel_name, new_topic])
-    channel.remove_client(sender)
 
-    channel.topic.should eq(new_topic)
-    channel.topic_setter.should_not be_nil
-    channel.topic_set_at.should_not be_nil
+    # Remove sender from channel
+    domain_channel.remove_member(sender.nickname.to_s)
+
+    # Topic should persist
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.topic.should eq(new_topic)
+      ch.topic_set_by.should eq("Alice")
+      ch.topic_set_at.should_not be_nil
+    end
   end
 
   it "topic setter presist even if user left server" do
     sender = create_test_client("Alice")
     other_user = create_test_client("Bob")
     channel_name = "#test"
-    channel = Circed::Channel.new(channel_name)
-    channel.add_client(sender)
-    channel.add_client(other_user)
-    Circed::ChannelHandler.add_channel(channel)
+
+    # Add users to channel
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.add_member(sender.nickname.to_s)
+    domain_channel.members[sender.nickname.to_s] << 'o' # Make first user operator
+    domain_channel.add_member(other_user.nickname.to_s)
 
     new_topic = "new topic"
     Circed::Actions::Topic.call(sender, [channel_name, new_topic])
-    Circed::UserHandler.remove_connection(sender.nickname.not_nil!)
 
-    channel.topic.should eq(new_topic)
-    channel.topic_setter.should_not be_nil
-    channel.topic_set_at.should_not be_nil
+    # Remove user from server
+    if nickname = sender.nickname
+      user_repository.remove_client(nickname)
+    end
+
+    # Topic should persist
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.topic.should eq(new_topic)
+      ch.topic_set_by.should eq("Alice")
+      ch.topic_set_at.should_not be_nil
+    end
   end
 
   it "returns an error when a non-operator sets a topic" do
     sender = create_test_client("Alice")
     other_user = create_test_client("Bob")
     channel_name = "#test"
-    channel = Circed::Channel.new(channel_name)
-    channel.add_client(other_user)
-    channel.add_client(sender)
-    Circed::ChannelHandler.add_channel(channel)
+
+    # Add Bob first (gets operator), then Alice (doesn't get operator)
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.add_member(other_user.nickname.to_s)
+    domain_channel.add_member(sender.nickname.to_s)
 
     new_topic = "new topic"
     Circed::Actions::Topic.call(sender, [channel_name, new_topic])
 
-    channel.topic.should_not eq(new_topic)
-    channel.topic_setter.should be_nil
-    channel.topic_set_at.should be_nil
-
-    # sender.socket.received_errors.should include({error: Numerics::ERR_CHANOPRIVSNEEDED, message: "You're not an operator on that channel"})
+    # Topic should not be changed since Alice is not an operator
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.topic.should_not eq(new_topic)
+      ch.topic_set_by.should be_nil
+      ch.topic_set_at.should be_nil
+    end
   end
 
   it "returns an error for an invalid channel" do
@@ -93,15 +122,19 @@ describe Circed::Actions::Topic do
   it "returns an error if a user is not in the channel" do
     sender = create_test_client("Alice")
     channel_name = "#test"
-    channel = Circed::Channel.new(channel_name)
-    Circed::ChannelHandler.add_channel(channel)
+
+    # Create empty channel (no users)
+    create_test_channel(channel_name)
 
     Circed::Actions::Topic.call(sender, [channel_name, "new topic"])
 
-    channel.topic.should_not eq("new topic")
-    channel.topic_setter.should be_nil
-    channel.topic_set_at.should be_nil
-
-    # sender.socket.received_errors.should include({error: Numerics::ERR_NOTONCHANNEL, message: "You're not on that channel"})
+    # Topic should not be set
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.topic.should_not eq("new topic")
+      ch.topic_set_by.should be_nil
+      ch.topic_set_at.should be_nil
+    end
   end
 end

@@ -1,34 +1,35 @@
-module Circed
-  class Actions::Mode
-    extend Circed::ActionHelper
+require "./base_action"
 
-    def self.call(sender, message : Array(String))
+module Circed
+  class Actions::Mode < Actions::BaseAction
+    protected def self.execute_action(sender : Client, message : Array(String)) : Nil
       return if message.empty?
 
-      user_or_channel = message.first
-      if user_or_channel.starts_with?("#")
-        channel = ChannelHandler.get_channel(user_or_channel)
-        if channel
-          if message.size > 1 && (message[1].starts_with?("+") || message[1].starts_with?("-"))
-            # channel mode
-            target_nick = message[2]?
-            channel.change_channel_mode(sender, message[1], target_nick)
-          else
-            # user mode
-            if message.size > 1
-              target_nick = message[1]
-              channel.change_user_mode(sender, target_nick, message[2..-1].join)
-            end
-          end
+      target = message.first
+      irc_service = Infrastructure::ServiceLocator.irc_service
+
+      if target.starts_with?("#") || target.starts_with?("&")
+        # Channel mode
+        if message.size > 1 && (message[1].starts_with?("+") || message[1].starts_with?("-"))
+          mode_string = message[1]
+          mode_target = message[2]?
+
+          # Use IRC service for mode changes with full validation
+          irc_service.change_mode(sender, target, mode_string, mode_target)
         else
-          send_error(sender, Numerics::ERR_NOSUCHCHANNEL, user_or_channel, "No such channel")
+          # Query mode (not implemented yet)
+          Log.info { "Mode query not implemented" }
         end
       else
-        client = UserHandler.get_client(user_or_channel)
-        if client
-          # client.not_nil!.mode(self, message[1..-1].join)
+        # User mode
+        if message.size > 1 && (message[1].starts_with?("+") || message[1].starts_with?("-"))
+          mode_string = message[1]
+
+          # Use IRC service for user mode changes
+          irc_service.change_mode(sender, target, mode_string)
         else
-          send_error(sender, Numerics::ERR_NOSUCHNICK, user_or_channel, "No such nick")
+          # Query user mode (not implemented yet)
+          Log.info { "User mode query not implemented" }
         end
       end
     end

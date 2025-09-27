@@ -1,5 +1,5 @@
 describe Circed::Server do
-  # TODO: Write tests
+  # Tests for server functionality
 
   it "should return name" do
     Circed::Server.name.should eq("localhost")

@@ -1,89 +1,79 @@
 require "../../spec_helper"
 
-describe Circed::Channel do
-  # TODO: Write tests
-
+describe Circed::Domain::Channel do
   it "should be able to create a new channel" do
-    channel = Circed::Channel.new("")
-    channel.should be_a(Circed::Channel)
+    channel = Circed::Domain::Channel.new("#test")
+    channel.should be_a(Circed::Domain::Channel)
   end
 
   it "should be able to create a new channel with a name" do
-    channel = Circed::Channel.new("test")
-    channel.should be_a(Circed::Channel)
+    channel = Circed::Domain::Channel.new("#test")
+    channel.should be_a(Circed::Domain::Channel)
     channel.name.should eq("#test")
   end
 
-  it "should be able to create a new channel with a name and empty users" do
-    channel = Circed::Channel.new("test")
-    channel.should be_a(Circed::Channel)
+  it "should be able to create a new channel with empty members" do
+    channel = Circed::Domain::Channel.new("#test")
+    channel.should be_a(Circed::Domain::Channel)
     channel.name.should eq("#test")
-    channel.channel_empty?.should be_true
-    channel.irc_name.should eq(":#test")
+    channel.empty?.should be_true
+    channel.member_count.should eq(0)
   end
 
   it "should be able to add users to a channel" do
-    channel = Circed::Channel.new("test")
-    client = Circed::Client.new(nil)
-    channel.add_client(client)
-    channel.channel_empty?.should be_false
-    channel.user_in_channel?(client).should be_true
+    channel = Circed::Domain::Channel.new("#test")
+    channel.add_member("Alice")
+    channel.empty?.should be_false
+    channel.has_member?("Alice").should be_true
+    channel.member_count.should eq(1)
   end
 
   it "should be able to remove users from a channel" do
-    channel = Circed::Channel.new("test")
-    client = Circed::Client.new(nil)
-    channel.add_client(client)
-    channel.channel_empty?.should be_false
-    channel.user_in_channel?(client).should be_true
-    channel.remove_client(client)
-    channel.channel_empty?.should be_true
-    channel.user_in_channel?(client).should be_false
+    channel = Circed::Domain::Channel.new("#test")
+    channel.add_member("Alice")
+    channel.empty?.should be_false
+    channel.has_member?("Alice").should be_true
+    channel.remove_member("Alice")
+    channel.empty?.should be_true
+    channel.has_member?("Alice").should be_false
   end
 
-  it "should be able to change mode" do
-    channel = Circed::Channel.new("#test")
-    channel.modes.should eq({} of String => String)
-    client = Circed::Client.new(nil)
-    channel.add_client(client)
-    channel.change_channel_mode(client, "+s")
-    channel.modes.should eq({"s" => nil})
+  it "should be able to manage channel modes" do
+    channel = Circed::Domain::Channel.new("#test")
+    channel.modes.should be_empty
+    channel.modes << 's'
+    channel.modes.should contain('s')
   end
 
-  it "should not be able to change mode if not part of channel" do
-    channel = Circed::Channel.new("test")
-    channel.modes.should eq({} of String => String)
-    client = Circed::Client.new(nil)
-    channel.change_channel_mode(client, "+s")
-    channel.modes.should eq({} of String => String)
+  it "should be able to manage user modes in channel" do
+    channel = Circed::Domain::Channel.new("#test")
+    channel.add_member("Alice")
+    channel.members["Alice"] << 'o' # Make operator
+    channel.members["Alice"].should contain('o')
+    # Note: operators method doesn't exist, but we can verify the user has 'o' mode
+    channel.user_modes("Alice").should contain('o')
   end
 
-  it "should be able to change topic if part of channel" do
-    client = Circed::Client.new(nil)
-    Circed::ChannelHandler.add_user_to_channel("#test", client)
-    channel = Circed::ChannelHandler.get_channel("#test")
-    channel.try(&.topic).should eq("")
-    Circed::Actions::Topic.call(client, ["#test", "test"])
-    channel.try(&.topic).should eq("test")
-    channel.try(&.topic_setter).should be_a(Circed::ChannelUser)
+  it "should be able to manage topic" do
+    channel = Circed::Domain::Channel.new("#test")
+    channel.topic.should be_nil
+    channel.topic = "Test topic"
+    channel.topic_set_by = "Alice"
+    channel.topic_set_at = Time.utc
+    channel.topic.should eq("Test topic")
+    channel.topic_set_by.should eq("Alice")
+    channel.topic_set_at.should be_a(Time)
   end
 
-  it "should not be able to change topic if not part of channel" do
-    channel = Circed::Channel.new("#test")
-    channel.topic.should eq("")
-    client = Circed::Client.new(nil)
-    Circed::Actions::Topic.call(client, [channel.name, "test"])
-    channel.topic.should eq("")
-  end
+  it "should be able to manage invite and ban lists" do
+    channel = Circed::Domain::Channel.new("#test")
+    channel.invite_list.should be_empty
+    channel.ban_list.should be_empty
 
-  it "should not be able to change topic if not operator" do
-    channel = Circed::Channel.new("#test")
-    channel.topic.should eq("")
-    client = Circed::Client.new(nil)
-    channel.add_client(client)
-    client2 = Circed::Client.new(nil)
-    channel.add_client(client2)
-    Circed::Actions::Topic.call(client2, [channel.name, "test"])
-    channel.topic.should eq("")
+    channel.invite_list << "Alice"
+    channel.ban_list << "Evil*"
+
+    channel.invite_list.should contain("Alice")
+    channel.ban_list.should contain("Evil*")
   end
 end

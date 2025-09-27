@@ -10,18 +10,16 @@ jobs:
       fail-fast: false
       matrix:
         crystal_version:
-          - 1.6.0
-          - 1.6.2
-          - 1.7.0
+          - 1.16.3
         experimental:
           - false
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1
         with:
-          crystal: 1.6.2
+          crystal: ${{ matrix.crystal_version }}
       - name: Format
         run: crystal tool format --check
 
@@ -30,9 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         crystal_version:
-          - 1.6.0
-          - 1.6.2
-          - 1.7.0
+          - 1.16.3
         experimental:
           - true
     runs-on: ubuntu-latest
@@ -55,14 +51,14 @@ jobs:
       #     host node port: 9300
       #     node port: 9300
           # discovery type: 'single-node'
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1
         with:
-          crystal: 1.7.0
+          crystal: ${{ matrix.crystal_version }}
 
       - name: Set up Crystal cache
-        uses: actions/cache@v2
+        uses: actions/cache@v4
         id: crystal-cache
         with:
           path: |

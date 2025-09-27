@@ -7,12 +7,12 @@ module Circed
     @last_ping : Time?
     @last_pong : Time?
 
-    getter client : Client
+    getter client : Client | LinkServer
 
     @task_ping : Tasker::Repeat(Int32) | Tasker::Repeat(Nil)
     @task_pong_check : Tasker::Repeat(Int32) | Tasker::Repeat(Nil)
 
-    def initialize(@client : Client)
+    def initialize(@client : Client | LinkServer)
       @task_ping = Tasker.every(20.seconds) do
         stop_ping if client.closed?
         Log.info { "pinged #{nickname}" }
@@ -22,7 +22,8 @@ module Circed
       end
       @task_pong_check = Tasker.every(30.seconds) do
         stop_pong_check if client.closed?
-        if @last_pong && @last_pong.not_nil! < 1.minutes.ago
+        last_pong_time = @last_pong
+        if last_pong_time && last_pong_time < 1.minutes.ago
           Log.debug { "PONG timedout for #{nickname} - closing socket" }
           stop_ping
           stop_pong_check
@@ -32,28 +33,33 @@ module Circed
     end
 
     def ping(params : Array(String))
-      if !@last_pong || (@last_pong && @last_pong.not_nil! < 5.seconds.ago)
-        Log.debug { "PONG #{nickname}" }
+      handle_heartbeat("PING", @last_pong) do
         send_message(create_pong_message(params))
       end
       @last_ping = Time.utc
     end
 
     def pong(params : Array(String))
-      if !@last_ping || (@last_ping && @last_ping.not_nil! < 5.seconds.ago)
-        Log.debug { "PING #{nickname}" }
+      handle_heartbeat("PONG", @last_ping) do
         send_message(create_ping_message)
       end
       @last_pong = Time.utc
       @last_ping = @last_pong
     end
 
+    private def handle_heartbeat(type : String, last_time : Time?, &)
+      if last_time.nil? || last_time < 5.seconds.ago
+        Log.debug { "#{type} #{nickname}" }
+        yield
+      end
+    end
+
     def stop_ping
-      @task_ping.not_nil!.cancel
+      @task_ping.try(&.cancel)
     end
 
     def stop_pong_check
-      @task_pong_check.not_nil!.cancel
+      @task_pong_check.try(&.cancel)
     end
 
     def nickname

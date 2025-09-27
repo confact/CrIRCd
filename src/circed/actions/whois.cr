@@ -1,12 +1,13 @@
-module Circed
-  class Actions::Whois
-    extend Circed::ActionHelper
+require "./base_action"
 
-    def self.call(sender, target_nickname : String)
-      target = UserHandler.get_client(target_nickname)
+module Circed
+  class Actions::Whois < Actions::UserAction
+    protected def self.execute_action(sender : Client, target_nickname : String) : Nil
+      user_repo = user_repository
+      target = user_repo.get_client(target_nickname)
 
       if target.nil?
-        send_error(sender, Numerics::ERR_NOSUCHNICK, target_nickname, "No such nick")
+        Utils::IrcUtils.send_no_such_nick_error(sender, target_nickname)
         return
       end
 
@@ -15,7 +16,7 @@ module Circed
       sender.send_message(Server.clean_name, Numerics::RPL_WHOISUSER, sender.nickname, target.nickname, user.try(&.name), target.host, "*", ":#{user.try(&.realname)}")
       sender.send_message(Server.clean_name, Numerics::RPL_WHOISSERVER, sender.nickname, target.nickname, Server.name, ":#{Server.config.host}")
 
-      channels_list = target.channels.map(&.name).join(" ")
+      channels_list = target.channels.map(&.name.as(String)).join(" ")
       sender.send_message(Server.clean_name, Numerics::RPL_WHOISCHANNELS, sender.nickname, target.nickname, ":#{channels_list}")
 
       idle_time_seconds = (Time.utc - target.last_activity).to_i

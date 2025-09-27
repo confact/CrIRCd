@@ -1,0 +1,616 @@
+# Consolidated IRC service for common operations
+# Handles both local operations and network-wide synchronization
+
+require "../utils/irc_utils"
+
+module Circed
+  module Services
+    class IRCService
+      def initialize(@user_repository : Repositories::UserRepository,
+                     @channel_repository : Repositories::ChannelRepository,
+                     @notification_service : NotificationService)
+      end
+
+      # Removed duplicate error handling - now using Utils::IrcUtils
+
+      # User joins a channel with proper validation, notifications, and network sync
+      def join_channel(client : Client, channel_name : String, password : String? = nil) : Bool
+        return false unless nickname = client.nickname
+
+        # Basic format validation
+        return false unless Utils::IrcUtils.validate_channel_name(client, channel_name)
+
+        # Get or create channel
+        channel = @channel_repository.create_channel(channel_name)
+
+        # Already in channel?
+        if channel.has_member?(nickname)
+          Utils::IrcUtils.send_user_on_channel_error(client, channel_name)
+          return false
+        end
+
+        # Validation checks
+        unless validate_join_permissions(client, channel, password)
+          return false
+        end
+
+        # Add user to channel
+        channel.add_member(nickname)
+
+        # Make first user an operator
+        if channel.member_count == 1
+          channel.members[nickname] << 'o'
+        end
+
+        # Sync with network state
+        sync_join_with_network(nickname, channel_name)
+
+        # Send JOIN confirmation to the user
+        client.send_message(":#{client.hostmask} JOIN #{channel_name}")
+
+        # Send topic if channel has one
+        if topic = channel.topic
+          client.send_message(Server.clean_name, Numerics::RPL_TOPIC, nickname, channel_name, ":#{topic}")
+          if (topic_by = channel.topic_set_by) && (topic_time = channel.topic_set_at)
+            client.send_message(Server.clean_name, Numerics::RPL_TOPICTIME, nickname, channel_name, topic_by, topic_time.to_unix.to_s)
+          end
+        end
+
+        # Send NAMES list
+        send_names_list(client, channel)
+
+        # Send notifications to other users
+        @notification_service.notify_user_joined(nickname, channel_name)
+
+        # Propagate to network
+        propagate_to_network(":#{client.hostmask} JOIN #{channel_name}")
+
+        true
+      end
+
+      # User parts from a channel with network sync
+      def part_channel(client : Client, channel_name : String, reason : String? = nil) : Bool
+        return false unless nickname = client.nickname
+
+        channel = @channel_repository.get(channel_name)
+        unless channel
+          Utils::IrcUtils.send_no_such_channel_error(client, channel_name)
+          return false
+        end
+
+        unless channel.has_member?(nickname)
+          Utils::IrcUtils.send_not_on_channel_error(client, channel_name)
+          return false
+        end
+
+        # Remove user from channel
+        channel.remove_member(nickname)
+
+        # Sync with network state
+        sync_part_with_network(nickname, channel_name)
+
+        # Send notifications
+        @notification_service.notify_user_parted(nickname, channel_name, reason)
+
+        # Propagate to network
+        part_message = ":#{client.hostmask} PART #{channel_name}"
+        part_message += " :#{reason}" if reason
+        propagate_to_network(part_message)
+
+        # Clean up empty channel
+        if channel.empty?
+          @channel_repository.remove(channel_name)
+        end
+
+        true
+      end
+
+      # Handle user nickname changes with network sync
+      def change_nickname(client : Client, new_nickname : String) : Bool
+        return false unless old_nickname = client.nickname
+
+        # Update repositories
+        unless @user_repository.change_nickname(old_nickname, new_nickname)
+          return false
+        end
+
+        # Update client's nickname
+        client.nickname = new_nickname
+
+        # Sync with network state
+        sync_nick_with_network(old_nickname, new_nickname)
+
+        # Send notifications
+        @notification_service.notify_nick_change(old_nickname, new_nickname)
+
+        # Propagate to network
+        if user = @user_repository.get(new_nickname)
+          propagate_to_network(":#{old_nickname}!#{user.username}@#{user.hostname} NICK #{new_nickname}")
+        end
+
+        true
+      end
+
+      # Handle user quit with network sync
+      def quit_user(client : Client, reason : String? = nil) : Bool
+        return false unless nickname = client.nickname
+
+        # Get user channels before removal
+        user_channels = @channel_repository.find_user_channels(nickname)
+
+        # Remove from all channels
+        user_channels.each do |channel|
+          channel.remove_member(nickname)
+          if channel.empty?
+            @channel_repository.remove(channel.name)
+          end
+        end
+
+        # Sync with network state
+        sync_quit_with_network(nickname)
+
+        # Send notifications
+        @notification_service.notify_user_quit(nickname, reason)
+
+        # Propagate to network
+        quit_message = ":#{client.hostmask} QUIT"
+        quit_message += " :#{reason}" if reason
+        propagate_to_network(quit_message)
+
+        # Remove from repositories
+        @user_repository.remove(nickname)
+
+        true
+      end
+
+      # Route messages to local or remote targets
+      def route_message(sender : Client, target : String, message : String) : Bool
+        sender_nick = sender.nickname
+        return false unless sender_nick
+
+        if target.starts_with?("#")
+          # Channel message
+          route_channel_message(sender, target, message)
+        else
+          # Private message
+          route_private_message(sender, target, message)
+        end
+      end
+
+      # Set channel topic with validation and network sync
+      def update_topic(client : Client, channel_name : String, topic : String) : Bool
+        return false unless nickname = client.nickname
+
+        # Basic format validation
+        unless channel_name.starts_with?("#") || channel_name.starts_with?("&")
+          Utils::IrcUtils.send_channel_error(client, channel_name)
+          return false
+        end
+
+        channel = @channel_repository.get(channel_name)
+        unless channel
+          Utils::IrcUtils.send_no_such_channel_error(client, channel_name)
+          return false
+        end
+
+        # Check if user is in channel
+        unless channel.has_member?(nickname)
+          Utils::IrcUtils.send_not_on_channel_error(client, channel_name)
+          return false
+        end
+
+        # Check if user is operator
+        user_modes = channel.members[nickname]?
+        unless user_modes && user_modes.includes?('o')
+          Utils::IrcUtils.send_not_operator_error(client, channel_name)
+          return false
+        end
+
+        # Set topic
+        channel.topic = topic
+        channel.topic_set_by = nickname
+        channel.topic_set_at = Time.utc
+
+        # Send notifications
+        @notification_service.notify_topic_change(channel_name, topic, nickname)
+
+        # Propagate to network
+        propagate_to_network(":#{client.hostmask} TOPIC #{channel_name} :#{topic}")
+
+        true
+      end
+
+      # Change channel or user modes with network sync
+      def change_mode(client : Client, target : String, mode_string : String, mode_target : String? = nil) : Bool
+        nickname = client.nickname
+        return false unless nickname
+
+        if target.starts_with?("#") || target.starts_with?("&")
+          # Channel mode
+          change_channel_mode(client, target, mode_string, mode_target)
+        else
+          # User mode
+          change_user_mode(client, target, mode_string)
+        end
+      end
+
+      private def change_channel_mode(client : Client, channel_name : String, mode_string : String, target : String? = nil) : Bool
+        return false unless nickname = client.nickname
+
+        channel = @channel_repository.get(channel_name)
+        unless channel
+          Utils::IrcUtils.send_no_such_channel_error(client, channel_name)
+          return false
+        end
+
+        # Check if user is in channel and is operator
+        unless channel.has_member?(nickname)
+          Utils::IrcUtils.send_not_on_channel_error(client, channel_name)
+          return false
+        end
+
+        user_modes = channel.members[nickname]?
+        unless user_modes && user_modes.includes?('o')
+          Utils::IrcUtils.send_not_operator_error(client, channel_name)
+          return false
+        end
+
+        # Parse mode string
+        return false if mode_string.size < 2
+
+        adding = mode_string.starts_with?("+")
+        mode_char = mode_string[1]
+
+        case mode_char
+        when 'i', 'm', 'n', 't', 's', 'p' # Simple channel modes
+          if adding
+            channel.modes << mode_char
+          else
+            channel.modes.delete(mode_char)
+          end
+        when 'o', 'h', 'v' # User modes in channel
+          return false unless target && channel.has_member?(target)
+
+          target_modes = channel.members[target]
+          if adding
+            target_modes << mode_char
+          else
+            target_modes.delete(mode_char)
+          end
+        else
+          return false
+        end
+
+        # Send notifications
+        targets = target ? [target] : [] of String
+        @notification_service.notify_mode_change(channel_name, mode_string, nickname, targets)
+
+        # Propagate to network
+        mode_message = ":#{client.hostmask} MODE #{channel_name} #{mode_string}"
+        mode_message += " #{target}" if target
+        propagate_to_network(mode_message)
+
+        true
+      end
+
+      private def change_user_mode(client : Client, target : String, mode_string : String) : Bool
+        return false unless nickname = client.nickname
+
+        # Only allow users to change their own modes
+        unless target == nickname
+          Utils::IrcUtils.send_users_dont_match_error(client)
+          return false
+        end
+
+        user = @user_repository.get(nickname)
+        unless user
+          Utils::IrcUtils.send_no_such_nick_error(client, target)
+          return false
+        end
+
+        # Parse mode string
+        return false if mode_string.size < 2
+
+        adding = mode_string.starts_with?("+")
+        modes_to_process = mode_string[1..].chars
+
+        modes_to_process.each do |mode_char|
+          case mode_char
+          when 'i' # Invisible mode
+            if adding
+              user.modes << mode_char
+            else
+              user.modes.delete(mode_char)
+            end
+          when 'w' # Wallops mode
+            if adding
+              user.modes << mode_char
+            else
+              user.modes.delete(mode_char)
+            end
+          when 'o' # Operator mode - can only be removed, not added via MODE
+            unless adding
+              user.modes.delete(mode_char)
+            end
+          else
+            # Unknown mode - ignore
+            next
+          end
+        end
+
+        # Send mode change notification to user
+        client.send_message(
+          Server.clean_name,
+          Numerics::RPL_UMODEIS,
+          nickname,
+          ":#{build_user_mode_string(user)}"
+        )
+
+        # Propagate to network
+        propagate_to_network(":#{client.hostmask} MODE #{nickname} #{mode_string}")
+
+        # Update repository
+        @user_repository.add(nickname, user)
+
+        true
+      end
+
+      private def build_user_mode_string(user : Domain::User) : String
+        return "+" if user.modes.empty?
+        "+#{user.modes.join("")}"
+      end
+
+      # Kick user from channel with network sync
+      def kick_user(client : Client, channel_name : String, target_nickname : String, reason : String? = nil) : Bool
+        return false unless nickname = client.nickname
+
+        # Basic format validation
+        unless channel_name.starts_with?("#") || channel_name.starts_with?("&")
+          Utils::IrcUtils.send_channel_error(client, channel_name)
+          return false
+        end
+
+        channel = @channel_repository.get(channel_name)
+        unless channel
+          Utils::IrcUtils.send_no_such_channel_error(client, channel_name)
+          return false
+        end
+
+        # Check if user is in channel and is operator
+        unless channel.has_member?(nickname)
+          Utils::IrcUtils.send_not_on_channel_error(client, channel_name)
+          return false
+        end
+
+        user_modes = channel.members[nickname]?
+        unless user_modes && user_modes.includes?('o')
+          Utils::IrcUtils.send_not_operator_error(client, channel_name)
+          return false
+        end
+
+        # Check if target is in channel
+        unless channel.has_member?(target_nickname)
+          Utils::IrcUtils.send_no_such_nick_error(client, target_nickname)
+          return false
+        end
+
+        # Send KICK notification to the kicked user first (before removing them)
+        if kicked_user_client = @user_repository.get_client(target_nickname)
+          kick_message = ":#{client.hostmask} KICK #{channel_name} #{target_nickname}"
+          kick_message += " :#{reason}" if reason
+          kicked_user_client.send_message(kick_message)
+        end
+
+        # Remove target from channel
+        channel.remove_member(target_nickname)
+
+        # Send notifications to remaining channel members
+        @notification_service.notify_user_kicked(channel_name, target_nickname, nickname, reason)
+
+        # Propagate to network
+        kick_message = ":#{client.hostmask} KICK #{channel_name} #{target_nickname}"
+        kick_message += " :#{reason}" if reason
+        propagate_to_network(kick_message)
+
+        true
+      end
+
+      # Sync new user with network state
+      def sync_new_user(client : Client) : Bool
+        return false unless nickname = client.nickname
+
+        if user = @user_repository.get(nickname)
+          Network::NetworkState.add_user(
+            nickname,
+            user.username,
+            user.hostname,
+            user.realname,
+            user.server
+          )
+          true
+        else
+          false
+        end
+      end
+
+      private def validate_join_permissions(client : Client, channel : Domain::Channel, password : String?) : Bool
+        return false unless nickname = client.nickname
+
+        # Invite only?
+        if channel.invite_only? && !channel.invited?(nickname)
+          Utils::IrcUtils.send_invite_only_error(client, channel.name)
+          return false
+        end
+
+        # Channel key/password?
+        unless channel.password_matches?(password)
+          Utils::IrcUtils.send_bad_channel_key_error(client, channel.name)
+          return false
+        end
+
+        # User limit check
+        if channel.full?
+          Utils::IrcUtils.send_channel_full_error(client, channel.name)
+          return false
+        end
+
+        # Ban checking
+        if hostmask = client.hostmask
+          if channel.banned?(hostmask)
+            Utils::IrcUtils.send_banned_from_channel_error(client, channel.name)
+            return false
+          end
+        end
+
+        true
+      end
+
+      # Network synchronization methods
+      private def sync_join_with_network(nickname : String, channel_name : String)
+        Network::NetworkState.join_user_to_channel(nickname, channel_name)
+      end
+
+      private def sync_part_with_network(nickname : String, channel_name : String)
+        Network::NetworkState.part_user_from_channel(nickname, channel_name)
+      end
+
+      private def sync_nick_with_network(old_nickname : String, new_nickname : String)
+        # Remove old user and add new one
+        if user_info = Network::NetworkState.get_user(old_nickname)
+          Network::NetworkState.remove_user(old_nickname)
+          Network::NetworkState.add_user(
+            new_nickname,
+            user_info.username,
+            user_info.hostname,
+            user_info.realname,
+            user_info.server
+          )
+        end
+      end
+
+      private def sync_quit_with_network(nickname : String)
+        Network::NetworkState.remove_user(nickname)
+      end
+
+      # Network propagation methods
+      private def propagate_to_network(message : String)
+        ServerHandler.servers.each do |link_server|
+          link_server.safe_send(message)
+        end
+      end
+
+      private def route_channel_message(sender : Client, channel_name : String, message : String) : Bool
+        return false unless sender_nick = sender.nickname
+
+        # Check if sender is in channel
+        unless @channel_repository.user_in_channel?(channel_name, sender_nick)
+          Utils::IrcUtils.send_cannot_send_to_channel_error(sender, channel_name)
+          return false
+        end
+
+        # Send to local channel members
+        @notification_service.notify_channel_message(sender_nick, channel_name, message)
+
+        # Propagate to network
+        propagate_to_network(":#{sender.hostmask} PRIVMSG #{channel_name} :#{message}")
+
+        true
+      end
+
+      private def route_private_message(sender : Client, target : String, message : String) : Bool
+        return false unless sender_nick = sender.nickname
+
+        # Check if target is local
+        if @user_repository.has_client?(target)
+          # Check if target is away
+          if target_user = @user_repository.get(target)
+            if target_user.away? && target_user.away_message
+              # Send away message to sender
+              sender.send_message(
+                Server.clean_name,
+                Numerics::RPL_AWAY,
+                sender_nick,
+                target,
+                ":#{target_user.away_message}"
+              )
+            end
+          end
+
+          @notification_service.notify_private_message(sender_nick, target, message)
+          true
+        else
+          # Check if target exists in network
+          if Network::NetworkState.get_user(target)
+            # Route to appropriate server
+            if target_server = find_user_server(target)
+              route_to_server = find_route_to_server(target_server)
+              if route_to_server
+                # Find the server by name
+                server = ServerHandler.servers.find { |server_handler| server_handler.name == route_to_server }
+                if server
+                  server.safe_send(":#{sender.hostmask} PRIVMSG #{target} :#{message}")
+                  true
+                else
+                  Utils::IrcUtils.send_no_such_nick_error(sender, target)
+                  false
+                end
+              else
+                Utils::IrcUtils.send_no_such_nick_error(sender, target)
+                false
+              end
+            else
+              Utils::IrcUtils.send_no_such_nick_error(sender, target)
+              false
+            end
+          else
+            Utils::IrcUtils.send_no_such_nick_error(sender, target)
+            false
+          end
+        end
+      end
+
+      private def find_user_server(nickname : String) : String?
+        Network::NetworkState.get_user(nickname).try(&.server)
+      end
+
+      private def find_route_to_server(target_server : String) : String?
+        Network::NetworkState.route_to_server(target_server)
+      end
+
+      # Send NAMES list for a channel to a client
+      private def send_names_list(client : Client, channel : Domain::Channel)
+        return unless nickname = client.nickname
+
+        # Debug: log channel members
+        Log.debug { "Channel #{channel.name} members: #{channel.members.keys.inspect}" }
+
+        # Build names list with prefixes
+        names = [] of String
+        channel.members.each do |member_nick, modes|
+          # Skip empty nicknames
+          if member_nick.empty?
+            Log.warn { "Found empty nickname in channel #{channel.name}" }
+            next
+          end
+
+          prefix = ""
+          prefix += "@" if modes.includes?('o') # Operator
+          prefix += "%" if modes.includes?('h') # Halfop
+          prefix += "+" if modes.includes?('v') # Voice
+          names << "#{prefix}#{member_nick}"
+        end
+
+        Log.debug { "Sending NAMES for #{channel.name}: #{names.inspect}" }
+
+        # Send names in chunks (IRC has line length limits)
+        names.each_slice(10) do |name_chunk|
+          names_line = name_chunk.join(" ")
+          client.send_message(Server.clean_name, Numerics::RPL_NAMREPLY, nickname, "=", channel.name, ":#{names_line}")
+        end
+
+        # Send end of names
+        client.send_message(Server.clean_name, Numerics::RPL_ENDOFNAMES, nickname, channel.name, ":End of /NAMES list")
+      end
+    end
+  end
+end
