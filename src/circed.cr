@@ -12,6 +12,9 @@ require "./circed/repositories/**"
 # Services
 require "./circed/services/**"
 
+# IRC Services (ChanServ, UserServ)
+require "./circed/services"
+
 # Legacy modules (to be gradually refactored to use repository pattern)
 require "./circed/mixins/**"
 require "./circed/network/**"

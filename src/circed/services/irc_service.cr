@@ -65,6 +65,9 @@ module Circed
         # Propagate to network
         propagate_to_network(":#{client.hostmask} JOIN #{channel_name}")
 
+        # Handle ChanServ integration for registered channels
+        Services::ChannelManager.on_user_join(channel_name, nickname)
+
         true
       end
 
@@ -519,6 +522,12 @@ module Circed
 
       private def route_private_message(sender : Client, target : String, message : String) : Bool
         return false unless sender_nick = sender.nickname
+
+        # Check if target is a service
+        if Services::ServicesHub.service_nick?(target)
+          Services::ServicesHub.route_services_message(sender_nick, target, message)
+          return true
+        end
 
         # Check if target is local
         if @user_repository.has_client?(target)

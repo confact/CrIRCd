@@ -10,5 +10,6 @@ module Circed
     getter server_password : String? = nil
     getter network : String
     getter linked_servers : Array(LinkedServer) = [] of LinkedServer
+    getter? services_server : Bool = false
   end
 end
