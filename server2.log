@@ -1,0 +1,73 @@
+ Circed 0.1.1
+ Running on 0.0.0.0:7667
+ SSL enabled on 0.0.0.0:7697
+ ---
+2025-09-27T09:44:45.587647Z   INFO - Dependency injection container initialized
+2025-09-27T09:44:45.596441Z   INFO - SSL server listening on 0.0.0.0:7697
+2025-09-27T09:44:45.596806Z   INFO - Attempting to connect to server: localhost:6697 (SSL: true)
+2025-09-27T09:44:45.606079Z   INFO - Established SSL connection to localhost:6697
+2025-09-27T09:44:45.606089Z   INFO - Sent handshake to localhost:6697
+2025-09-27T09:46:15.848338Z   INFO - New SSL connection from 127.0.0.1:63110
+2025-09-27T09:46:15.855693Z   INFO - SSL handshake completed with 127.0.0.1:63110
+2025-09-27T09:46:15.855854Z   INFO - :0.0.0.0 451 * * :You have not registered
+
+2025-09-27T09:46:15.855896Z   INFO - :0.0.0.0 001  :Welcome to the TestSSLNetwork IRC Network, !
+
+2025-09-27T09:46:15.855898Z   INFO - :0.0.0.0 002  :Your host is 0.0.0.0, running version 0.1.1
+
+2025-09-27T09:46:15.855902Z   INFO - :0.0.0.0 003  :This server was created on 2025-09-27 09:44:45 UTC
+
+2025-09-27T09:46:15.855904Z   INFO - :0.0.0.0 004  0.0.0.0 0.1.1 oiwszcrkfydnxbauglZCD biklmnopstvrDdRcC bkloveqjfI
+
+Unhandled exception in spawn: write (#<TCPSocket:0x101a02b40>): Broken pipe (IO::Error)
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/crystal/event_loop/polling.cr:270:5 in 'write'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/crystal/system/socket.cr:82:5 in 'system_write'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/socket.cr:483:16 in 'unbuffered_write'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/io/buffered.cr:147:14 in 'write'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/openssl/bio.cr:31:7 in '->'
+  from /opt/homebrew/Cellar/openssl@3/3.5.2/lib/libcrypto.3.dylib in 'bio_write_intern'
+  from /opt/homebrew/Cellar/openssl@3/3.5.2/lib/libcrypto.3.dylib in 'BIO_write'
+  from /opt/homebrew/Cellar/openssl@3/3.5.2/lib/libssl.3.dylib in 'tls_retry_write_records'
+  from /opt/homebrew/Cellar/openssl@3/3.5.2/lib/libssl.3.dylib in 'ssl3_write_bytes'
+  from /opt/homebrew/Cellar/openssl@3/3.5.2/lib/libssl.3.dylib in 'SSL_write'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/openssl/ssl/socket.cr:148:5 in 'unbuffered_write'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/io/buffered.cr:250:5 in 'flush'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/io/buffered.cr:258:5 in 'close'
+  from src/circed/clients/client.cr:190:20 in 'shutdown'
+  from src/circed/clients/client.cr:68:25 in 'message_handling'
+  from src/circed/clients/client.cr:36:7 in 'setup'
+  from src/circed/server.cr:198:7 in 'handle_user_connection'
+  from src/circed/server.cr:110:9 in 'handle_wrapped_client'
+  from src/circed/server.cr:98:7 in 'handle_client'
+  from src/circed/server.cr:57:11 in '->'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/fiber.cr:170:11 in 'run'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/fiber.cr:105:3 in '->'
+2025-09-27T09:46:29.050359Z   WARN - IO Error
+read (#<TCPSocket:0x101a02b40>): Connection reset by peer (IO::Error)
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/crystal/event_loop/polling.cr:258:5 in 'read'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/crystal/system/socket.cr:78:5 in 'system_read'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/socket.cr:478:5 in 'unbuffered_read'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/io/buffered.cr:91:16 in 'read'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/openssl/bio.cr:46:13 in '->'
+  from /opt/homebrew/Cellar/openssl@3/3.5.2/lib/libcrypto.3.dylib in 'bio_read_intern'
+  from /opt/homebrew/Cellar/openssl@3/3.5.2/lib/libcrypto.3.dylib in 'BIO_read'
+  from /opt/homebrew/Cellar/openssl@3/3.5.2/lib/libssl.3.dylib in 'tls_default_read_n'
+  from /opt/homebrew/Cellar/openssl@3/3.5.2/lib/libssl.3.dylib in 'tls_get_more_records'
+  from /opt/homebrew/Cellar/openssl@3/3.5.2/lib/libssl.3.dylib in 'tls_read_record'
+  from /opt/homebrew/Cellar/openssl@3/3.5.2/lib/libssl.3.dylib in 'ssl3_read_bytes'
+  from /opt/homebrew/Cellar/openssl@3/3.5.2/lib/libssl.3.dylib in 'ssl3_read_internal'
+  from /opt/homebrew/Cellar/openssl@3/3.5.2/lib/libssl.3.dylib in 'SSL_read'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/openssl/ssl/socket.cr:129:5 in 'unbuffered_read'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/io/buffered.cr:272:5 in 'fill_buffer'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/io/buffered.cr:93:9 in 'read'
+  from lib/fast_irc/src/fast_irc/reader.cr:62:19 in 'fill_buffer'
+  from lib/fast_irc/src/fast_irc/reader.cr:33:11 in 'next'
+  from lib/fast_irc/src/fast_irc.cr:14:21 in 'message_handling'
+  from src/circed/clients/client.cr:36:7 in 'setup'
+  from src/circed/server.cr:198:7 in 'handle_user_connection'
+  from src/circed/server.cr:110:9 in 'handle_wrapped_client'
+  from src/circed/server.cr:98:7 in 'handle_client'
+  from src/circed/server.cr:57:11 in '->'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/fiber.cr:170:11 in 'run'
+  from /Users/confact/.asdf/installs/crystal/1.17.1/src/fiber.cr:105:3 in '->'
+

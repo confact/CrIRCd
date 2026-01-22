@@ -1,0 +1,23 @@
+ Circed 0.1.1
+ Running on 0.0.0.0:16667
+ SSL enabled on 0.0.0.0:16697
+ ---
+2025-09-27T12:33:18.478264Z   INFO - Dependency injection container initialized
+2025-09-27T12:33:18.487732Z   INFO - SSL server listening on 0.0.0.0:16697
+2025-09-27T12:33:18.487967Z   INFO - Attempting to connect to server: localhost:17697 (SSL: true)
+2025-09-27T12:33:18.499658Z  ERROR - Failed to connect to server localhost:17697 - Error connecting to 'localhost:17697': Connection refused
+2025-09-27T12:33:18.576450Z   INFO - New plain connection from 127.0.0.1:63348
+2025-09-27T12:33:18.576538Z   WARN - Could not determine connection type, buffer: []
+2025-09-27T12:33:18.576540Z   WARN - Unknown connection type from 127.0.0.1:63348
+2025-09-27T12:33:18.598407Z   INFO - New SSL connection from 127.0.0.1:63352
+2025-09-27T12:33:18.607435Z   INFO - SSL handshake completed with 127.0.0.1:63352
+2025-09-27T12:33:21.686250Z   INFO - New SSL connection from 127.0.0.1:63356
+2025-09-27T12:33:21.696636Z   INFO - SSL handshake completed with 127.0.0.1:63356
+2025-09-27T12:33:21.705506Z   INFO - :0.0.0.0 001 Alice :Welcome to the TestNetwork IRC Network, Alice!
+
+2025-09-27T12:33:21.705514Z   INFO - :0.0.0.0 002 Alice :Your host is 0.0.0.0, running version 0.1.1
+
+2025-09-27T12:33:21.705522Z   INFO - :0.0.0.0 003 Alice :This server was created on 2025-09-27 12:33:18 UTC
+
+2025-09-27T12:33:21.705524Z   INFO - :0.0.0.0 004 Alice 0.0.0.0 0.1.1 oiwszcrkfydnxbauglZCD biklmnopstvrDdRcC bkloveqjfI
+

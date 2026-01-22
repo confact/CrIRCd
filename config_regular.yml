@@ -1,0 +1,30 @@
+# IRC Server Configuration - Regular Server
+host: "leaf1.irc.network.com"
+port: 6667
+network: "ExampleNet"
+max_users: 500
+link_password: "linking_password"
+server_password: "optional_server_password"
+services_server: false  # This server will NOT host services (default)
+
+# SSL Configuration
+ssl:
+  enabled: true
+  port: 6697
+  starttls: true
+  # cert_file: "/path/to/cert.pem"
+  # key_file: "/path/to/key.pem"
+  verify_mode: false
+
+# Linked servers in the network
+linked_servers:
+  - host: "services.irc.network.com"  # Connect to services server
+    port: 6667
+    link_password: "linking_password"
+    use_ssl: false
+    verify_ssl: false
+  - host: "hub.irc.network.com"
+    port: 6667
+    link_password: "linking_password"
+    use_ssl: false
+    verify_ssl: false

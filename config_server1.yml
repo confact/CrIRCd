@@ -1,0 +1,10 @@
+host: "127.0.0.1"
+port: 6667
+max_users: 1000
+server_password: nil
+network: "TestNet"
+link_password: "testlink123"
+linked_servers:
+  - host: "127.0.0.1"
+    port: 6668
+    link_password: "testlink123"

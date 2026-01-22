@@ -13,7 +13,7 @@ module Circed
         NOT_REGISTERED         = "You have not registered"
         NICKNAME_IN_USE        = "Nickname is already in use"
         CANNOT_SEND_TO_CHANNEL = "Cannot send to channel"
-        INVITE_ONLY_CHANNEL    = "Channel is invite only"
+        INVITE_ONLY_CHANNEL    = "Cannot join channel (+i)"
         BANNED_FROM_CHANNEL    = "You are banned from this channel"
         CHANNEL_HAS_PASSWORD   = "Channel has a password"
         CHANNEL_IS_FULL        = "Channel is full"

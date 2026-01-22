@@ -1,0 +1,464 @@
+---
+description: "Repository pattern and dependency injection for CrIRCd"
+globs: "src/circed/repositories/*.cr,src/circed/services/*.cr,src/circed/infrastructure/*.cr"
+---
+
+# Repository Pattern & Dependency Injection Guide
+
+You are an expert in repository pattern implementation and dependency injection for Crystal applications.
+
+## Repository Pattern Architecture
+
+### Core Repository Interface
+Located in [src/circed/core/interfaces.cr](mdc:src/circed/core/interfaces.cr):
+
+```crystal
+module Core
+  module Repository(T)
+    abstract def add(id : String, entity : T) : Void
+    abstract def get(id : String) : T?
+    abstract def remove(id : String) : Bool
+    abstract def all : Array(T)
+    abstract def size : Int32
+    abstract def clear : Void
+  end
+end
+```
+
+### Repository Implementation Pattern
+All repositories in [src/circed/repositories/](mdc:src/circed/repositories/) follow this pattern:
+
+```crystal
+module Circed
+  module Repositories
+    class EntityRepository
+      include Core::Repository(Domain::Entity)
+      
+      @@entities = Hash(String, Domain::Entity).new
+      
+      def add(id : String, entity : Domain::Entity) : Void
+        @@entities[id] = entity
+      end
+      
+      def get(id : String) : Domain::Entity?
+        @@entities[id]?
+      end
+      
+      def remove(id : String) : Bool
+        !@@entities.delete(id).nil?
+      end
+      
+      def all : Array(Domain::Entity)
+        @@entities.values
+      end
+      
+      def size : Int32
+        @@entities.size
+      end
+      
+      def clear : Void
+        @@entities.clear
+      end
+    end
+  end
+end
+```
+
+## Dependency Injection Container
+
+### Container Implementation
+Located in [src/circed/infrastructure/container.cr](mdc:src/circed/infrastructure/container.cr):
+
+```crystal
+module Infrastructure
+  class Container
+    alias ServiceInstance = Repositories::UserRepository | 
+                           Repositories::ChannelRepository | 
+                           Repositories::ServerRepository | 
+                           Services::AuthenticationService | 
+                           Services::NotificationService | 
+                           Services::IRCService
+
+    @@instances = Hash(String, ServiceInstance).new
+
+    def self.register(type : T.class, instance : T) forall T
+      @@instances[type.name] = instance.as(ServiceInstance)
+    end
+
+    def self.resolve(type : T.class) : T forall T
+      instance = @@instances[type.name]?
+      raise "Service #{type.name} not registered" unless instance
+      instance.as(T)
+    end
+  end
+end
+```
+
+### Service Locator Pattern
+```crystal
+module Infrastructure
+  module ServiceLocator
+    def self.user_repository
+      Container.resolve(Repositories::UserRepository)
+    end
+
+    def self.channel_repository
+      Container.resolve(Repositories::ChannelRepository)
+    end
+
+    def self.server_repository
+      Container.resolve(Repositories::ServerRepository)
+    end
+
+    def self.authentication_service
+      Container.resolve(Services::AuthenticationService)
+    end
+
+    def self.notification_service
+      Container.resolve(Services::NotificationService)
+    end
+
+    def self.irc_service
+      Container.resolve(Services::IRCService)
+    end
+  end
+end
+```
+
+## Repository Implementations
+
+### UserRepository
+Located in [src/circed/repositories/user_repository.cr](mdc:src/circed/repositories/user_repository.cr):
+
+```crystal
+class UserRepository
+  include Core::Repository(Domain::User)
+
+  @@users = Hash(String, Domain::User).new
+  @@clients = Hash(String, Client).new  # Maps nickname to local client
+
+  # Domain user management
+  def add(id : String, entity : Domain::User) : Void
+    @@users[id] = entity
+  end
+
+  # Client-specific methods (for local users)
+  def add_client(client : Client) : Void
+    if nickname = client.nickname
+      @@clients[nickname] = client
+    end
+  end
+
+  def get_client(nickname : String) : Client?
+    @@clients[nickname]?
+  end
+
+  def has_client?(nickname : String) : Bool
+    @@clients.has_key?(nickname)
+  end
+
+  def remove_client(nickname : String) : Bool
+    !@@clients.delete(nickname).nil?
+  end
+
+  def update_nickname(old_nickname : String, new_nickname : String) : Bool
+    return false unless @@clients.has_key?(old_nickname)
+    
+    client = @@clients[old_nickname]
+    @@clients.delete(old_nickname)
+    @@clients[new_nickname] = client
+    
+    if user = @@users[old_nickname]?
+      @@users.delete(old_nickname)
+      user.nickname = new_nickname
+      @@users[new_nickname] = user
+    end
+    
+    true
+  end
+end
+```
+
+### ChannelRepository
+Located in [src/circed/repositories/channel_repository.cr](mdc:src/circed/repositories/channel_repository.cr):
+
+```crystal
+class ChannelRepository
+  include Core::Repository(Domain::Channel)
+
+  @@channels = Hash(String, Domain::Channel).new
+
+  def create_channel(name : String) : Domain::Channel
+    normalized_name = normalize_channel_name(name)
+    
+    if existing = get(normalized_name)
+      existing
+    else
+      channel = Domain::Channel.new(normalized_name)
+      add(normalized_name, channel)
+      channel
+    end
+  end
+
+  def join_user(channel_name : String, nickname : String, modes = Set(Char).new) : Bool
+    channel = create_channel(channel_name)
+    channel.add_member(nickname, modes)
+    true
+  end
+
+  def part_user(channel_name : String, nickname : String) : Bool
+    return false unless channel = get(channel_name)
+    
+    success = channel.remove_member(nickname)
+    
+    # Remove empty channels
+    if channel.empty?
+      remove(channel_name)
+    end
+    
+    success
+  end
+
+  def update_topic(channel_name : String, topic : String, set_by : String) : Bool
+    return false unless channel = get(channel_name)
+    
+    channel.topic = topic
+    channel.topic_set_by = set_by
+    channel.topic_set_at = Time.utc
+    true
+  end
+
+  def user_in_channel?(channel_name : String, nickname : String) : Bool
+    return false unless channel = get(channel_name)
+    channel.has_member?(nickname)
+  end
+
+  def user_operator?(channel_name : String, nickname : String) : Bool
+    return false unless channel = get(channel_name)
+    channel.user_modes(nickname).includes?('o')
+  end
+
+  def find_user_channels(nickname : String) : Array(Domain::Channel)
+    all.select { |channel| channel.has_member?(nickname) }
+  end
+
+  def remove_user_from_all_channels(nickname : String) : Array(String)
+    affected_channels = [] of String
+    
+    all.each do |channel|
+      if channel.has_member?(nickname)
+        channel.remove_member(nickname)
+        affected_channels << channel.name
+        
+        # Remove empty channels
+        if channel.empty?
+          remove(channel.name)
+        end
+      end
+    end
+    
+    affected_channels
+  end
+
+  def cleanup_empty_channels : Int32
+    empty_channels = all.select(&.empty?)
+    empty_channels.each { |channel| remove(channel.name) }
+    empty_channels.size
+  end
+
+  private def normalize_channel_name(name : String) : String
+    name.downcase
+  end
+end
+```
+
+## Service Layer Integration
+
+### Service Dependencies
+Services depend on repositories through dependency injection:
+
+```crystal
+module Services
+  class IRCService
+    def initialize(@user_repository : Repositories::UserRepository,
+                   @channel_repository : Repositories::ChannelRepository,
+                   @notification_service : NotificationService)
+    end
+
+    def join_channel(client : Client, channel_name : String, password : String? = nil) : Bool
+      return false unless nickname = client.nickname
+      
+      # Use repository to get/create channel
+      channel = @channel_repository.create_channel(channel_name)
+      
+      # Validate permissions
+      unless validate_join_permissions(client, channel, password)
+        return false
+      end
+      
+      # Add user to channel
+      channel.add_member(nickname)
+      
+      # Send notifications
+      @notification_service.notify_user_joined(nickname, channel_name)
+      
+      true
+    end
+  end
+end
+```
+
+### Service Registration
+In [src/circed/infrastructure/container.cr](mdc:src/circed/infrastructure/container.cr):
+
+```crystal
+def self.setup_default_services(config : Config)
+  # Create repositories
+  user_repo = Repositories::UserRepository.new
+  channel_repo = Repositories::ChannelRepository.new
+  server_repo = Repositories::ServerRepository.new
+
+  # Create services with dependencies
+  auth_service = Services::AuthenticationService.new(config)
+  notification_service = Services::NotificationService.new(user_repo, channel_repo)
+  irc_service = Services::IRCService.new(user_repo, channel_repo, notification_service)
+
+  # Register in container
+  register(Repositories::UserRepository, user_repo)
+  register(Repositories::ChannelRepository, channel_repo)
+  register(Repositories::ServerRepository, server_repo)
+  register(Services::AuthenticationService, auth_service)
+  register(Services::NotificationService, notification_service)
+  register(Services::IRCService, irc_service)
+end
+```
+
+## Usage Patterns
+
+### In Action Classes
+```crystal
+module Actions
+  class Join
+    def self.call(sender, channel_name, password = nil)
+      # Access services through service locator
+      irc_service = Infrastructure::ServiceLocator.irc_service
+      
+      # Use service for business logic
+      success = irc_service.join_channel(sender, channel_name, password)
+      
+      unless success
+        # Handle failure
+        send_error(sender, Numerics::ERR_NOSUCHCHANNEL, channel_name, "Cannot join channel")
+      end
+    end
+  end
+end
+```
+
+### In Server Classes
+```crystal
+class Server
+  def self.handle_client(connection)
+    # Initialize container if needed
+    initialize_container unless @@container_initialized
+    
+    # Use repositories for client management
+    user_repository = Infrastructure::ServiceLocator.user_repository
+    
+    # Handle client connection
+    client = Client.new(connection, buffer)
+    user_repository.add_client(client)
+  end
+end
+```
+
+## Testing Integration
+
+### Test Helpers
+In [spec/support/repository_helper.cr](mdc:spec/support/repository_helper.cr):
+
+```crystal
+module RepositoryHelper
+  def user_repository
+    Infrastructure::ServiceLocator.user_repository
+  end
+
+  def channel_repository
+    Infrastructure::ServiceLocator.channel_repository
+  end
+
+  def clear_repositories
+    user_repository.clear
+    channel_repository.clear
+  end
+end
+```
+
+### Test Setup
+In [spec/spec_helper.cr](mdc:spec/spec_helper.cr):
+
+```crystal
+# Initialize container for tests
+Infrastructure::Container.setup_default_services(Server.config)
+
+include RepositoryHelper
+```
+
+## Best Practices
+
+### Repository Design
+- Keep repositories focused on data access
+- Use class variables (`@@`) for shared state
+- Implement all interface methods
+- Provide domain-specific methods beyond basic CRUD
+
+### Service Design
+- Inject dependencies through constructor
+- Keep services stateless when possible
+- Use services for complex business logic
+- Coordinate between multiple repositories
+
+### Container Usage
+- Register all services at startup
+- Use service locator for accessing dependencies
+- Keep container interface simple
+- Avoid circular dependencies
+
+### Error Handling
+```crystal
+def get_required_service(type : T.class) : T forall T
+  service = Container.resolve(type)
+  raise "Required service #{type.name} not available" unless service
+  service
+end
+```
+
+### Memory Management
+- Clear repositories in tests
+- Clean up empty collections
+- Use efficient data structures
+- Monitor memory usage in long-running processes
+
+## Domain Entity Integration
+
+### Entity Creation
+```crystal
+# Create domain entities through repositories
+user = Domain::User.new(nickname, username, hostname, realname, servername)
+user_repository.add(nickname, user)
+
+channel = Domain::Channel.new(channel_name)
+channel_repository.add(channel_name, channel)
+```
+
+### Entity Lifecycle
+- Repositories manage entity persistence
+- Services coordinate entity interactions
+- Actions handle entity state changes
+- Domain entities contain business logic
+
+### Data Consistency
+- Use repositories for all data access
+- Maintain referential integrity
+- Handle cascading deletes properly
+- Validate state transitions

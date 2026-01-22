@@ -1,0 +1,394 @@
+---
+description: "IRC protocol implementation standards and RFC compliance"
+globs: "src/circed/actions/*.cr,src/circed/commands/*.cr,src/circed/servers/*.cr"
+---
+
+# IRC Protocol Implementation Guide
+
+You are an expert in IRC protocol implementation following RFC 1459 and RFC 2813 standards.
+
+## IRC Protocol Standards
+
+### RFC Compliance
+- **RFC 1459**: Internet Relay Chat Protocol (base protocol)
+- **RFC 2813**: Internet Relay Chat: Server Protocol (server-to-server)
+- Follow standard IRC message format: `:<prefix> <command> <params> :<trailing>`
+
+### Message Format
+```
+:<prefix> <command> <param1> <param2> ... :<trailing>
+```
+
+## IRC Commands Implementation
+
+### Client Commands
+Located in [src/circed/actions/](mdc:src/circed/actions/):
+
+#### USER Command
+```crystal
+# Format: USER <username> <hostname> <servername> <realname>
+def self.call(sender, username, hostname, servername, realname)
+  # Implementation should validate parameters
+  # Set user information
+  # Send welcome sequence if authentication complete
+end
+```
+
+#### NICK Command
+```crystal
+# Format: NICK <nickname>
+def self.call(sender, new_nickname)
+  # Check nickname availability
+  # Update user repository
+  # Notify channels of nick change
+end
+```
+
+#### JOIN Command
+```crystal
+# Format: JOIN <channel> [key]
+def self.call(sender, channel_name, key = nil)
+  # Validate channel name format
+  # Check permissions and bans
+  # Add user to channel
+  # Send join notifications
+end
+```
+
+#### PART Command
+```crystal
+# Format: PART <channel> [message]
+def self.call(sender, channel_name, message = nil)
+  # Remove user from channel
+  # Send part notifications
+  # Clean up empty channels
+end
+```
+
+#### PRIVMSG Command
+```crystal
+# Format: PRIVMSG <target> <message>
+def self.call(sender, target, message)
+  # Route to channel or user
+  # Handle away messages
+  # Forward to network if needed
+end
+```
+
+#### QUIT Command
+```crystal
+# Format: QUIT [message]
+def self.call(sender, message = nil)
+  # Remove from all channels
+  # Notify network of quit
+  # Clean up resources
+end
+```
+
+### Server Commands
+Located in [src/circed/commands/server_commands.cr](mdc:src/circed/commands/server_commands.cr):
+
+#### SERVER Command
+```crystal
+# Format: SERVER <servername> <hopcount> <info>
+def self.server(link_server, params)
+  # Validate server authentication
+  # Add to network topology
+  # Initialize burst protocol
+end
+```
+
+#### SQUIT Command
+```crystal
+# Format: SQUIT <server> <comment>
+def self.squit(link_server, params)
+  # Remove server from network
+  # Handle netsplit
+  # Propagate to other servers
+end
+```
+
+#### NJOIN Command
+```crystal
+# Format: NJOIN <channel> <nicks>
+def self.njoin(link_server, params)
+  # Batch join multiple users
+  # Sync channel state
+  # Notify local users
+end
+```
+
+## IRC Numerics
+
+### Reply Codes (RPL_*)
+Located in [src/circed/numerics.cr](mdc:src/circed/numerics.cr):
+
+#### Welcome Sequence
+```crystal
+RPL_WELCOME = "001"      # Welcome message
+RPL_YOURHOST = "002"     # Your host info
+RPL_CREATED = "003"      # Server creation date
+RPL_MYINFO = "004"       # Server info
+```
+
+#### Channel Operations
+```crystal
+RPL_TOPIC = "332"        # Channel topic
+RPL_NAMREPLY = "353"     # Names list
+RPL_ENDOFNAMES = "366"   # End of names
+RPL_CHANNELMODEIS = "324" # Channel modes
+```
+
+#### User Information
+```crystal
+RPL_WHOISUSER = "311"    # WHOIS user info
+RPL_WHOISSERVER = "312"  # WHOIS server info
+RPL_WHOISOPERATOR = "313" # WHOIS operator
+RPL_WHOISIDLE = "317"    # WHOIS idle time
+RPL_ENDOFWHOIS = "318"   # End of WHOIS
+```
+
+### Error Codes (ERR_*)
+```crystal
+ERR_NOSUCHNICK = "401"        # No such nick
+ERR_NOSUCHSERVER = "402"      # No such server
+ERR_NOSUCHCHANNEL = "403"     # No such channel
+ERR_CANNOTSENDTOCHAN = "404"  # Cannot send to channel
+ERR_TOOMANYCHANNELS = "405"   # Too many channels
+ERR_WASNOSUCHNICK = "406"     # Was no such nick
+ERR_TOOMANYTARGETS = "407"    # Too many targets
+ERR_NICKNAMEINUSE = "433"     # Nickname in use
+ERR_ERRONEUSNICKNAME = "432"  # Erroneous nickname
+ERR_NOTONCHANNEL = "442"      # Not on channel
+ERR_USERONCHANNEL = "443"     # User on channel
+ERR_NEEDMOREPARAMS = "461"    # Need more parameters
+ERR_ALREADYREGISTERED = "462"  # Already registered
+ERR_PASSWDMISMATCH = "464"    # Password mismatch
+ERR_CHANNELISFULL = "471"     # Channel is full
+ERR_INVITEONLYCHAN = "473"    # Invite only channel
+ERR_BANNEDFROMCHAN = "474"    # Banned from channel
+ERR_BADCHANNELKEY = "475"     # Bad channel key
+ERR_CHANOPRIVSNEEDED = "482"  # Chan ops needed
+```
+
+## Channel Management
+
+### Channel Types
+- **#channels**: Normal channels (network-wide)
+- **&channels**: Local channels (server-specific)
+- **+channels**: Modeless channels
+- **!channels**: Safe channels (unique IDs)
+
+### Channel Modes
+#### User Modes in Channels
+```crystal
+'o' => "operator"     # Channel operator
+'v' => "voice"        # Voice privilege
+'h' => "halfop"       # Half-operator (if supported)
+```
+
+#### Channel Modes
+```crystal
+'i' => "invite-only"  # Invite only
+'k' => "key"         # Channel key (password)
+'l' => "limit"       # User limit
+'m' => "moderated"   # Moderated channel
+'n' => "no-external" # No external messages
+'p' => "private"     # Private channel
+'s' => "secret"      # Secret channel
+'t' => "topic-lock"  # Topic lock
+'b' => "ban"         # Ban mask
+```
+
+### Channel Operations
+```crystal
+# Join validation
+def validate_join(client, channel, key = nil)
+  return false if channel.banned?(client.hostmask)
+  return false if channel.invite_only? && !channel.invited?(client.nickname)
+  return false if channel.has_password? && channel.password != key
+  return false if channel.full?
+  true
+end
+
+# Mode parsing
+def parse_mode_string(mode_string)
+  adding = true
+  modes = [] of {Char, Bool, String?}
+  
+  mode_string.each_char do |char|
+    case char
+    when '+'
+      adding = true
+    when '-'
+      adding = false
+    else
+      modes << {char, adding, nil}
+    end
+  end
+  
+  modes
+end
+```
+
+## Server-to-Server Protocol
+
+### Connection Flow
+1. **PASS** - Send password
+2. **SERVER** - Send server info
+3. **Burst** - Sync initial state
+4. **Normal operation** - Forward messages
+
+### Burst Protocol
+```crystal
+# Send all network state to new server
+def send_burst(link_server)
+  # Send all servers
+  NetworkState.servers.each do |name, server|
+    link_server.send_message("SERVER", name, server.hopcount.to_s, server.description)
+  end
+  
+  # Send all users
+  NetworkState.users.each do |nick, user|
+    link_server.send_message("NICK", nick, user.hopcount.to_s, user.username, 
+                             user.hostname, user.server, user.realname)
+  end
+  
+  # Send all channels
+  NetworkState.channels.each do |name, channel|
+    if channel.members.any?
+      nicks = channel.members.keys.join(",")
+      link_server.send_message("NJOIN", name, nicks)
+    end
+  end
+end
+```
+
+### Message Routing
+```crystal
+# Route message to appropriate server
+def route_message(message, target_server)
+  # Find route to target server
+  route = NetworkState.route_to_server(target_server)
+  
+  if route
+    # Forward to next hop
+    send_to_server(route, message)
+  else
+    # No route found
+    send_error("No route to server")
+  end
+end
+```
+
+## Message Validation
+
+### Parameter Validation
+```crystal
+def validate_nick(nickname)
+  return false if nickname.empty?
+  return false if nickname.size > 30
+  return false unless nickname.matches?(/^[a-zA-Z][a-zA-Z0-9\-\[\]\\`^{}_]*$/)
+  true
+end
+
+def validate_channel_name(name)
+  return false if name.empty?
+  return false unless name.starts_with?('#') || name.starts_with?('&')
+  return false if name.size > 200
+  return false if name.includes?(' ') || name.includes?('\0') || name.includes?('\r') || name.includes?('\n')
+  true
+end
+```
+
+### Rate Limiting
+```crystal
+# Implement rate limiting for commands
+class RateLimiter
+  def initialize(@max_commands = 10, @time_window = 60)
+    @command_counts = Hash(String, Array(Time)).new
+  end
+  
+  def check_rate(client_id : String) : Bool
+    now = Time.utc
+    commands = @command_counts[client_id]? || [] of Time
+    
+    # Remove old commands outside time window
+    commands.reject! { |time| now - time > @time_window.seconds }
+    
+    if commands.size >= @max_commands
+      false
+    else
+      commands << now
+      @command_counts[client_id] = commands
+      true
+    end
+  end
+end
+```
+
+## Security Considerations
+
+### Input Sanitization
+- Always validate input parameters
+- Check for buffer overflow attempts
+- Sanitize user-generated content
+- Validate hostmasks and patterns
+
+### Authentication
+- Verify server passwords
+- Check user credentials
+- Implement connection limits
+- Rate limit authentication attempts
+
+### Access Control
+- Validate operator privileges
+- Check channel permissions
+- Implement ban checking
+- Enforce channel limits
+
+## Error Handling
+
+### IRC Error Responses
+```crystal
+def send_irc_error(client, numeric, params = [] of String, message = "")
+  error_message = Format.format_server_message(
+    Server.clean_name, 
+    numeric, 
+    client.nickname || "*", 
+    *params, 
+    message
+  )
+  client.send_message(error_message)
+end
+```
+
+### Network Errors
+```crystal
+def handle_network_error(link_server, error)
+  Log.error { "Network error from #{link_server.name}: #{error}" }
+  
+  # Send SQUIT
+  send_squit(link_server.name, "Network error: #{error}")
+  
+  # Clean up connection
+  link_server.close("Network error")
+end
+```
+
+## Performance Optimization
+
+### Message Batching
+- Batch NJOIN messages for efficiency
+- Combine multiple mode changes
+- Use burst protocol for initial sync
+
+### Memory Management
+- Clean up empty channels
+- Remove disconnected users
+- Optimize data structures
+
+### Network Efficiency
+- Minimize redundant messages
+- Use efficient routing algorithms
+- Implement connection pooling

@@ -12,7 +12,7 @@ include RepositoryHelper
 def create_test_client(nickname : String) : Circed::Client
   socket = DummySocket.new
   buffer = ["NICK #{nickname}", "USER test test localhost :#{nickname}"]
-  client = Circed::Client.new(socket, buffer)
+  client = Circed::Client.new(socket.as(Circed::Network::SSLSocket::IRCSocket), buffer)
 
   # Directly set the nickname for testing
   client.nickname = nickname
@@ -25,4 +25,11 @@ def create_test_client(nickname : String) : Circed::Client
   user_repository.add_client(client)
 
   client
+end
+
+def create_test_link_server(buffer = ["PASS testpass", "SERVER remote.server.com 1 :Remote Server"])
+  dummy_socket = DummySocket.new
+  buffer.each { |line| dummy_socket.add_receive_data("#{line}\r\n") }
+  remote_addr = Socket::IPAddress.new("127.0.0.1", 12345)
+  Circed::LinkServer.new(dummy_socket.as(Circed::Network::SSLSocket::IRCSocket), buffer, remote_addr)
 end

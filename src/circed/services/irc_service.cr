@@ -17,6 +17,12 @@ module Circed
       def join_channel(client : Client, channel_name : String, password : String? = nil) : Bool
         return false unless nickname = client.nickname
 
+        # If client is not registered yet (no USER info), require registration before JOIN
+        unless client.user
+          client.send_message(Server.clean_name, Numerics::ERR_NOTREGISTERED, nickname, ":You have not registered")
+          return false
+        end
+
         # Basic format validation
         return false unless Utils::IrcUtils.validate_channel_name(client, channel_name)
 
@@ -37,16 +43,23 @@ module Circed
         # Add user to channel
         channel.add_member(nickname)
 
-        # Make first user an operator
+        # Make first user an operator (before sending any messages)
+        is_operator = false
         if channel.member_count == 1
           channel.members[nickname] << 'o'
+          is_operator = true
         end
 
         # Sync with network state
         sync_join_with_network(nickname, channel_name)
 
-        # Send JOIN confirmation to the user
+        # Send JOIN confirmation to the user (first message)
         client.send_message(":#{client.hostmask} JOIN #{channel_name}")
+
+        # Send MODE message if user became operator (second message)
+        if is_operator
+          client.send_message(":#{client.hostmask} MODE #{channel_name} +o #{nickname}")
+        end
 
         # Send topic if channel has one
         if topic = channel.topic
@@ -83,13 +96,18 @@ module Circed
           return false
         end
 
+        # Send PART confirmation to the user first
+        part_message = ":#{client.hostmask} PART #{channel_name}"
+        part_message += " :#{reason}" if reason
+        client.send_message(part_message)
+
         # Remove user from channel
         channel.remove_member(nickname)
 
         # Sync with network state
         sync_part_with_network(nickname, channel_name)
 
-        # Send notifications
+        # Send notifications to other channel members
         @notification_service.notify_user_parted(nickname, channel_name, reason)
 
         # Propagate to network
@@ -174,6 +192,19 @@ module Circed
         else
           # Private message
           route_private_message(sender, target, message)
+        end
+      end
+
+      def route_notice(sender : Client, target : String, message : String) : Bool
+        sender_nick = sender.nickname
+        return false unless sender_nick
+
+        if target.starts_with?("#")
+          # Channel notice
+          route_channel_notice(sender, target, message)
+        else
+          # Private notice
+          route_private_notice(sender, target, message)
         end
       end
 
@@ -569,12 +600,71 @@ module Circed
         end
       end
 
+      private def route_channel_notice(sender : Client, channel_name : String, message : String) : Bool
+        return false unless sender_nick = sender.nickname
+
+        # Check if sender is in channel
+        unless @channel_repository.user_in_channel?(channel_name, sender_nick)
+          # Notices don't send error responses - they just fail silently
+          return false
+        end
+
+        # Send to local channel members
+        @notification_service.notify_channel_notice(sender_nick, channel_name, message)
+
+        # Propagate to network
+        propagate_to_network(":#{sender.hostmask} NOTICE #{channel_name} :#{message}")
+
+        true
+      end
+
+      private def route_private_notice(sender : Client, target : String, message : String) : Bool
+        return false unless sender_nick = sender.nickname
+
+        # Check if target is local
+        if @user_repository.has_client?(target)
+          @notification_service.notify_private_notice(sender_nick, target, message)
+          true
+        else
+          # Check if target exists in network
+          if Network::NetworkState.get_user(target)
+            # Route to appropriate server
+            if target_server = find_user_server(target)
+              route_to_server = find_route_to_server(target_server)
+              if route_to_server
+                # Find the server by name
+                server = ServerHandler.servers.find { |server_handler| server_handler.name == route_to_server }
+                if server
+                  server.safe_send(":#{sender.hostmask} NOTICE #{target} :#{message}")
+                  true
+                else
+                  false
+                end
+              else
+                false
+              end
+            else
+              false
+            end
+          else
+            # Notices fail silently
+            false
+          end
+        end
+      end
+
       private def find_user_server(nickname : String) : String?
         Network::NetworkState.get_user(nickname).try(&.server)
       end
 
       private def find_route_to_server(target_server : String) : String?
         Network::NetworkState.route_to_server(target_server)
+      end
+
+      def add_channel_invite(channel_name : String, user_nickname : String) : Nil
+        if channel = @channel_repository.get(channel_name)
+          channel.add_invite(user_nickname)
+        end
       end
 
       # Send NAMES list for a channel to a client

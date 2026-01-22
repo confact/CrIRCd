@@ -6,16 +6,16 @@ module Circed
 
       @@channels = Hash(String, Domain::Channel).new
 
-      def add(name : String, channel : Domain::Channel) : Void
-        @@channels[name] = channel
+      def add(id : String, entity : Domain::Channel) : Void
+        @@channels[id] = entity
       end
 
-      def get(name : String) : Domain::Channel?
-        @@channels[name]?
+      def get(id : String) : Domain::Channel?
+        @@channels[id]?
       end
 
-      def remove(name : String) : Bool
-        !@@channels.delete(name).nil?
+      def remove(id : String) : Bool
+        !@@channels.delete(id).nil?
       end
 
       def all : Array(Domain::Channel)

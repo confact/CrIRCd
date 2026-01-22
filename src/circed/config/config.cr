@@ -1,3 +1,5 @@
+require "./ssl_config"
+
 module Circed
   class Config
     include YAML::Serializable
@@ -10,5 +12,14 @@ module Circed
     getter server_password : String? = nil
     getter network : String
     getter linked_servers : Array(LinkedServer) = [] of LinkedServer
+    getter ssl : SSLConfig?
+
+    def validate_ssl!
+      if ssl_config = ssl
+        if ssl_config.enabled? && !ssl_config.valid?
+          raise "Invalid SSL configuration: certificate and key files must exist"
+        end
+      end
+    end
   end
 end

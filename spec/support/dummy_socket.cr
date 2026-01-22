@@ -1,4 +1,5 @@
 require "socket"
+require "../../src/circed/network/ssl_socket"
 
 class DummySocket < IPSocket
   @receive_data : Array(String) = [] of String

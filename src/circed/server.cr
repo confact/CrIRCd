@@ -1,6 +1,8 @@
 require "socket"
+require "openssl"
 require "yaml"
 require "watcher"
+require "./network/ssl_socket"
 
 module Circed
   class ClosedClient < Exception; end
@@ -11,6 +13,8 @@ module Circed
     @@config_cache : String = File.read(@@config_file)
     @@start_time : Time = Time.utc
     @@container_initialized : Bool = false
+    @@ssl_context : OpenSSL::SSL::Context::Server? = nil
+    @@ssl_server : TCPServer? = nil
 
     def self.start_time
       @@start_time
@@ -20,40 +24,97 @@ module Circed
 
     def self.start
       initialize_container
+      config.validate_ssl!
       watch_config_file
+
+      # Start plain TCP server
       server = TCPServer.new(config.host, config.port)
-      # @@address = server.local_address.to_s
+
+      # Start SSL server if configured
+      if ssl_config = config.ssl
+        if ssl_config.enabled?
+          setup_ssl_server
+        end
+      end
+
       start_message
       bootup_servers # Connect to configured servers
+
+      # Accept connections from both plain and SSL servers
+      spawn accept_loop(server, false)
+
+      if ssl_server = @@ssl_server
+        spawn accept_loop(ssl_server, true)
+      end
+
+      sleep
+    end
+
+    private def self.accept_loop(server : TCPServer, is_ssl : Bool)
       loop do
         if client = server.accept?
-          # handle the client in a fiber
-          Log.info { "new user! - #{client.remote_address}" }
-          spawn handle_client(client)
+          Log.info { "New #{is_ssl ? "SSL" : "plain"} connection from #{client.remote_address}" }
+          spawn handle_client(client, is_ssl)
         else
-          # another fiber closed the server
           break
         end
       end
     end
 
-    def self.handle_client(connection)
+    private def self.setup_ssl_server
+      ssl_config = config.ssl
+      return unless ssl_config && ssl_config.enabled?
+
+      @@ssl_context = Network::SSLSocket.create_context(ssl_config)
+      @@ssl_server = TCPServer.new(config.host, ssl_config.port)
+      Log.info { "SSL server listening on #{config.host}:#{ssl_config.port}" }
+    rescue ex
+      Log.error { "Failed to setup SSL server: #{ex.message}" }
+      @@ssl_server = nil
+    end
+
+    def self.handle_client(connection : TCPSocket, is_ssl : Bool = false)
+      # Store remote address before SSL wrapping (which might not expose it)
+      remote_addr = connection.remote_address
+
+      # Wrap with SSL if needed
+      wrapped_connection = if is_ssl && (ctx = @@ssl_context)
+                             begin
+                               ssl_socket = Network::SSLSocket.wrap_server_socket(connection, ctx)
+                               Log.info { "SSL handshake completed with #{remote_addr}" }
+                               if peer_info = Network::SSLSocket.get_peer_info(ssl_socket)
+                                 Log.info { "SSL peer info: #{peer_info}" }
+                               end
+                               ssl_socket
+                             rescue ex
+                               Log.error { "SSL handshake failed: #{ex.message}" }
+                               connection.close
+                               return
+                             end
+                           else
+                             connection
+                           end
+
+      handle_wrapped_client(wrapped_connection, remote_addr)
+    end
+
+    def self.handle_wrapped_client(connection : Network::SSLSocket::IRCSocket, remote_addr : Socket::IPAddress)
       buffer = [] of String
 
       type = determine_connection_type(connection, buffer)
 
       case type
       when :server
-        handle_server_connection(connection, buffer)
+        handle_server_connection(connection, buffer, remote_addr)
       when :client
         handle_user_connection(connection, buffer)
       else
-        Log.warn { "Unknown connection type from #{connection.remote_address}" }
+        Log.warn { "Unknown connection type from #{remote_addr}" }
         connection.close
       end
     end
 
-    private def self.determine_connection_type(connection, buffer)
+    private def self.determine_connection_type(connection : Network::SSLSocket::IRCSocket, buffer)
       start_time = Time.utc
       timeout = 10.seconds # 10 second timeout
 
@@ -84,10 +145,10 @@ module Circed
         sleep(0.1.seconds)
       end
 
-      # If we've read some commands but couldn't determine type,
-      # assume it's a client if we have any client-like commands
-      if buffer.any? { |cmd| cmd.upcase.starts_with?("NICK") || cmd.upcase.starts_with?("USER") }
-        Log.debug { "Assuming client connection based on partial commands" }
+      # If we've read any commands but couldn't determine type, assume client.
+      # Client command processing will handle registration checks and errors.
+      if buffer.any?
+        Log.debug { "Defaulting to client connection (no PASS/SERVER detected)" }
         return :client
       end
 
@@ -113,12 +174,20 @@ module Circed
       buffer.map(&.split(' ', 2).first.upcase).to_set
     end
 
-    def self.handle_user_connection(client, buffer)
+    def self.handle_user_connection(client : Network::SSLSocket::IRCSocket, buffer)
       user_repo = Infrastructure::ServiceLocator.user_repository
 
+      # Get remote address for logging
+      remote_addr_str = case client
+                        when TCPSocket
+                          client.remote_address.to_s
+                        else
+                          "unknown"
+                        end
+
       if user_repo.count >= config.max_users
-        Log.warn { "User limit reached, refusing new client: #{client.remote_address}" }
-        client.puts "ERROR :Closing Link: #{client.remote_address} (Max users limit reached)"
+        Log.warn { "User limit reached, refusing new client: #{remote_addr_str}" }
+        client.puts "ERROR :Closing Link: #{remote_addr_str} (Max users limit reached)"
         sleep 1.second
         client.close
         return
@@ -130,8 +199,8 @@ module Circed
       # new_client.send_message(motd)
     end
 
-    def self.handle_server_connection(connection, buffer)
-      server = Circed::LinkServer.new(connection, buffer)
+    def self.handle_server_connection(connection : Network::SSLSocket::IRCSocket, buffer, remote_addr : Socket::IPAddress)
+      server = Circed::LinkServer.new(connection, buffer, remote_addr)
       Log.debug { "new server connected: #{server.name} from #{server.host}" }
     rescue ex
       Log.error { "Failed to establish server connection: #{ex.message}" }
@@ -142,12 +211,14 @@ module Circed
       config.linked_servers.each do |linked_server|
         spawn do
           begin
-            Log.info { "Attempting to connect to server: #{linked_server.host}:#{linked_server.port}" }
+            Log.info { "Attempting to connect to server: #{linked_server.host}:#{linked_server.port} (SSL: #{linked_server.use_ssl?})" }
             Circed::LinkServer.new(
               linked_server.host,
               linked_server.host,
               linked_server.port,
-              linked_server.link_password
+              linked_server.link_password,
+              linked_server.use_ssl?,
+              linked_server.verify_ssl?
             )
             Log.info { "Successfully connected to server: #{linked_server.host}" }
           rescue ex
@@ -192,6 +263,11 @@ module Circed
     def self.start_message
       puts " Circed #{VERSION}"
       puts " Running on #{config.host}:#{config.port}"
+      if ssl_config = config.ssl
+        if ssl_config.enabled?
+          puts " SSL enabled on #{config.host}:#{ssl_config.port}"
+        end
+      end
       puts " ---"
     end
 

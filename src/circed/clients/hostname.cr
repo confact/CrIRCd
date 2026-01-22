@@ -1,4 +1,5 @@
 require "durian"
+require "../network/ssl_socket"
 
 module Circed
   class Hostname
@@ -35,9 +36,23 @@ module Circed
       ip_address
     end
 
-    def self.get_hostname(socket : IPSocket) : String
-      return "localhost" if socket.nil? || socket.is_a?(DummySocket)
-      get_hostname(socket.remote_address.address)
+    def self.get_hostname(socket : Network::SSLSocket::IRCSocket) : String
+      return "localhost" if socket.nil?
+
+      case socket
+      when TCPSocket
+        # Handle test DummySocket
+        if socket.class.name == "DummySocket"
+          return "localhost"
+        end
+        get_hostname(socket.remote_address.address)
+      when OpenSSL::SSL::Socket::Server, OpenSSL::SSL::Socket::Client
+        # For SSL sockets, we can't easily get the remote address
+        # Return a default value
+        "ssl.client"
+      else
+        "unknown"
+      end
     end
 
     def self.ip_to_reverse_dns(ip_address : String) : String
