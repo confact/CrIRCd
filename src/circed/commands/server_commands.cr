@@ -129,15 +129,17 @@ module Circed
       end
 
       private def self.send_command_stats(client : Client)
-        client.send_message(
-          Server.clean_name,
-          "212",
-          client.nickname || "*",
-          "PRIVMSG",
-          "0",
-          "0",
-          "0"
-        )
+        Performance::Metrics.command_counts.to_a.sort_by(&.[0]).each do |command, count|
+          client.send_message(
+            Server.clean_name,
+            "212",
+            client.nickname || "*",
+            command,
+            count.to_s,
+            "0",
+            "0"
+          )
+        end
       end
 
       private def self.send_operator_stats(client : Client)

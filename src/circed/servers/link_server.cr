@@ -184,6 +184,8 @@ module Circed
     end
 
     private def dispatch_command(payload)
+      Performance::Metrics.increment_command(payload.command)
+
       case payload.command
       when "ERROR", "PING", "PONG"
         handle_connection_commands(payload)

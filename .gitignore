@@ -3,3 +3,8 @@
 /bin/
 /.shards/
 *.dwarf
+.DS_Store
+/circed
+/circed_test
+spec/logs/
+tmp/

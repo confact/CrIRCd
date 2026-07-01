@@ -53,6 +53,47 @@ max_users: 100
 link_password: "server_link_password"
 ```
 
+## Testing
+
+Use the focused test helper during development:
+
+```bash
+# Fast unit-level specs
+scripts/test fast
+
+# Real server integration specs
+scripts/test integration
+
+# Both suites
+scripts/test all
+```
+
+The integration specs bind fixed local ports and should be run sequentially.
+
+## Supported IRC Surface
+
+CrIRCd currently supports these client-facing commands:
+
+* Registration and connection: `NICK`, `USER`, `PASS`, `CAP`, `PING`, `PONG`,
+  `QUIT`, `AWAY`, `STARTTLS`
+* Messaging: `PRIVMSG`, `NOTICE`
+* Channels: `JOIN`, `PART`, `MODE`, `TOPIC`, `INVITE`, `KICK`, `NAMES`, `LIST`,
+  `WHO`
+* User/server queries: `WHOIS`, `LINKS`, `STATS`, `TIME`, `VERSION`, `ADMIN`
+
+Server-to-server links support handshake, burst, channel membership, user state,
+message routing, and basic server query propagation.
+
+Unsupported areas include IRC operator authentication, network GLines, extended
+ban matching, and persistent IRC services.
+
+## Configuration Reload
+
+The server watches the config file and reloads scalar configuration into memory,
+but runtime sockets are not reconciled after reload. Restart the process after
+changing bind host, ports, SSL certificates, linked servers, or limits that need
+to affect already-running listeners and links.
+
 ## SSL/TLS Configuration
 
 CrIRCd supports secure connections using SSL/TLS for both clients and server-to-server communication.

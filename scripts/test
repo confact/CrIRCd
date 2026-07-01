@@ -1,0 +1,19 @@
+#!/usr/bin/env sh
+set -eu
+
+case "${1:-fast}" in
+  fast)
+    crystal spec spec/circed
+    ;;
+  integration)
+    crystal spec spec/integration
+    ;;
+  all)
+    crystal spec spec/circed
+    crystal spec spec/integration
+    ;;
+  *)
+    echo "Usage: scripts/test [fast|integration|all]" >&2
+    exit 64
+    ;;
+esac

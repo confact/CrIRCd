@@ -331,8 +331,67 @@ describe "Channel Operations Integration" do
   end
 
   describe "cross-server channel operations" do
-    pending "synchronizes channel state across servers"
-    pending "propagates channel messages across servers"
-    pending "propagates channel modes across servers"
+    it "synchronizes channel state across servers" do
+      env.setup_linked_servers(ssl_enabled: true)
+      sleep 2.seconds
+
+      alice = env.create_client("Alice", port: 16697)
+      bob = env.create_client("Bob", port: 17697)
+
+      alice.register
+      bob.register
+
+      alice.join("#sync")
+      bob.join("#sync")
+
+      bob.should_receive(/353.*#sync.*Alice.*Bob/)
+      alice.should_receive(/Bob.*JOIN.*#sync/)
+
+      alice.quit
+      bob.quit
+    end
+
+    it "propagates channel messages across servers" do
+      env.setup_linked_servers(ssl_enabled: true)
+      sleep 2.seconds
+
+      alice = env.create_client("Alice", port: 16697)
+      bob = env.create_client("Bob", port: 17697)
+
+      alice.register
+      bob.register
+
+      alice.join("#messages")
+      bob.join("#messages")
+      sleep 0.5.seconds
+
+      alice.privmsg("#messages", "cross-server channel message")
+      assert_message_received(bob, "cross-server channel message", "Alice")
+
+      alice.quit
+      bob.quit
+    end
+
+    it "propagates channel modes across servers" do
+      env.setup_linked_servers(ssl_enabled: true)
+      sleep 2.seconds
+
+      alice = env.create_client("Alice", port: 16697)
+      bob = env.create_client("Bob", port: 17697)
+
+      alice.register
+      bob.register
+
+      alice.join("#remote-modes")
+      bob.join("#remote-modes")
+      sleep 0.5.seconds
+
+      alice.send("MODE #remote-modes +m")
+      alice.should_receive(/MODE #remote-modes.*\+m/)
+      bob.should_receive(/MODE #remote-modes.*\+m/)
+
+      alice.quit
+      bob.quit
+    end
   end
 end

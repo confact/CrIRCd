@@ -227,6 +227,8 @@ module Circed
     end
 
     private def run_commands(payload : FastIRC::Message)
+      Performance::Metrics.increment_command(payload.command)
+
       case payload.command
       when "LIST", "WHOIS", "WHO", "NAMES", "LINKS", "STATS", "TIME", "VERSION", "ADMIN"
         handle_query_commands(payload)

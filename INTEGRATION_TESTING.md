@@ -157,8 +157,14 @@ Tests message delivery:
 ### Quick Start
 
 ```bash
+# Run fast non-integration specs
+scripts/test fast
+
 # Run all integration tests
-crystal spec spec/integration/
+scripts/test integration
+
+# Run fast and integration specs sequentially
+scripts/test all
 
 # Run specific test suite
 crystal spec spec/integration/ssl_connection_spec.cr
