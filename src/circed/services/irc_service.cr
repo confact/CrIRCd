@@ -45,7 +45,7 @@ module Circed
         end
 
         # Add user to channel
-        channel.add_member(nickname)
+        @channel_repository.add_member(channel.name, nickname)
 
         # Make first user an operator (before sending any messages)
         is_operator = false
@@ -106,7 +106,7 @@ module Circed
         client.send_message(part_message)
 
         # Remove user from channel
-        channel.remove_member(nickname)
+        @channel_repository.part_user(channel.name, nickname)
 
         # Sync with network state
         sync_part_with_network(nickname, channel_name)
@@ -158,27 +158,15 @@ module Circed
       end
 
       private def update_channel_membership_nickname(old_nickname : String, new_nickname : String)
-        @channel_repository.all.each do |channel|
-          if modes = channel.members.delete(old_nickname)
-            channel.members[new_nickname] = modes
-          end
-        end
+        @channel_repository.rename_member(old_nickname, new_nickname)
       end
 
       # Handle user quit with network sync
       def quit_user(client : Client, reason : String? = nil) : Bool
         return false unless nickname = client.nickname
 
-        # Get user channels before removal
-        user_channels = @channel_repository.find_user_channels(nickname)
-
         # Remove from all channels
-        user_channels.each do |channel|
-          channel.remove_member(nickname)
-          if channel.empty?
-            @channel_repository.remove(channel.name)
-          end
-        end
+        @channel_repository.remove_user_from_all_channels(nickname)
 
         # Sync with network state
         sync_quit_with_network(nickname)
@@ -601,7 +589,7 @@ module Circed
         end
 
         # Remove target from channel
-        channel.remove_member(target_nickname)
+        @channel_repository.part_user(channel.name, target_nickname)
 
         # Send notifications to remaining channel members
         @notification_service.notify_user_kicked(channel_name, target_nickname, nickname, reason)

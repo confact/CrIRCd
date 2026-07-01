@@ -72,6 +72,60 @@ scripts/test all
 
 The integration specs bind fixed local ports and should be run sequentially.
 
+## Benchmarks and Capacity
+
+CrIRCd uses `max_users` as the configured local-client limit. Real concurrency is
+also bounded by the operating system file-descriptor limit, memory, TLS overhead,
+channel fanout size, and server-to-server links. Set `max_users` below the
+process file-descriptor limit with room for listening sockets, linked servers,
+logs, and outbound files.
+
+Reference benchmark on an Apple M1 Pro with 16 GB RAM, Crystal 1.17.1, release
+build, `LOG_LEVEL=ERROR`, and `ulimit -n 4096`:
+
+* 500 local clients registered and joined channels in 0.11 seconds
+  (~4,500 clients/s).
+* 2,000 local clients registered and joined channels in 0.48 seconds
+  (~4,100 clients/s).
+* 3,500 local clients registered and joined channels in 1.15 seconds
+  (~3,000 clients/s).
+
+The largest local socket benchmark run completed with 3,500 concurrent connected
+clients spread across 175 channels. This is a measured local baseline, not a hard
+limit; larger deployments should raise file-descriptor limits and benchmark on
+the target host.
+
+The in-memory channel index benchmark uses 20,000 users, 5,000 channels, and
+100,000 user-channel memberships:
+
+* Indexed user-channel lookups: 100,000 queries in 8.48 ms
+  (~11.8 million lookups/s).
+* Old scan-style lookup over all channels: 100,000 queries in 12.7 seconds
+  (~7,900 lookups/s).
+* Removing 20,000 users from all joined channels: 11.92 ms.
+
+That supports IRC networks with tens of thousands of users and thousands of
+channels for membership-heavy operations. Server-to-server networks should be
+kept to tens of directly linked servers until route-table caching and burst
+benchmarks are added; message propagation still fans out to linked servers.
+
+Run the benchmarks with:
+
+```bash
+crystal run --release benchmarks/channel_repository_benchmark.cr
+
+crystal build --release -o bin/circed src/circed.cr
+ulimit -n 4096
+LOG_LEVEL=ERROR bin/circed benchmarks/benchmark_config.yml
+```
+
+Then, from another shell with the same descriptor limit:
+
+```bash
+ulimit -n 4096
+crystal run --release benchmarks/local_client_load.cr -- 127.0.0.1 16680 3500 175 2
+```
+
 ## Supported IRC Surface
 
 CrIRCd currently supports these client-facing commands:

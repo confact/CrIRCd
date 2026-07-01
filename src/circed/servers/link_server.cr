@@ -324,11 +324,7 @@ module Circed
         end
       end
 
-      Infrastructure::ServiceLocator.channel_repository.all.each do |channel|
-        if modes = channel.members.delete(old_nick)
-          channel.members[new_nick] = modes
-        end
-      end
+      Infrastructure::ServiceLocator.channel_repository.rename_member(old_nick, new_nick)
 
       Log.debug { "Nick change: #{old_nick} -> #{new_nick}" }
     end
@@ -365,8 +361,9 @@ module Circed
       channel_name = payload.params[0]
 
       Network::NetworkState.join_user_to_channel(nickname, channel_name)
-      channel = Infrastructure::ServiceLocator.channel_repository.create_channel(channel_name)
-      channel.add_member(nickname) unless channel.has_member?(nickname)
+      channel_repository = Infrastructure::ServiceLocator.channel_repository
+      channel = channel_repository.create_channel(channel_name)
+      channel_repository.add_member(channel.name, nickname) unless channel.has_member?(nickname)
       Log.debug { "User #{nickname} joined #{channel_name}" }
     end
 

@@ -5,17 +5,26 @@ module Circed
       include Core::Repository(Domain::Channel)
 
       @@channels = Hash(String, Domain::Channel).new
+      @@user_channels = Hash(String, Set(String)).new
 
       def add(id : String, entity : Domain::Channel) : Void
-        @@channels[id] = entity
+        normalized_id = normalize_channel_name(id)
+        @@channels[normalized_id] = entity
+        index_channel_members(normalized_id, entity)
       end
 
       def get(id : String) : Domain::Channel?
-        @@channels[id]?
+        @@channels[normalize_channel_name(id)]?
       end
 
       def remove(id : String) : Bool
-        !@@channels.delete(id).nil?
+        normalized_id = normalize_channel_name(id)
+        if channel = @@channels.delete(normalized_id)
+          channel.members.each_key { |nickname| unindex_user_channel(nickname, normalized_id) }
+          true
+        else
+          false
+        end
       end
 
       def all : Array(Domain::Channel)
@@ -31,7 +40,7 @@ module Circed
       end
 
       def exists?(name : String) : Bool
-        @@channels.has_key?(name)
+        @@channels.has_key?(normalize_channel_name(name))
       end
 
       # Unified join method that handles both password and modes
@@ -43,12 +52,12 @@ module Circed
           return false unless channel.password_matches?(password)
         end
 
-        channel.add_member(nickname, modes)
-        true
+        add_member(channel.name, nickname, modes)
       end
 
       def clear : Void
         @@channels.clear
+        @@user_channels.clear
       end
 
       # Channel-specific operations
@@ -64,13 +73,22 @@ module Circed
         end
       end
 
+      def add_member(channel_name : String, nickname : String, modes : Set(Char) = Set(Char).new) : Bool
+        channel = create_channel(channel_name)
+        channel.add_member(nickname, modes)
+        index_user_channel(nickname, channel.name)
+        true
+      end
+
       def part_user(channel_name : String, nickname : String) : Bool
-        if channel = get(channel_name)
+        normalized_name = normalize_channel_name(channel_name)
+        if channel = get(normalized_name)
           removed = channel.remove_member(nickname)
+          unindex_user_channel(nickname, normalized_name) if removed
 
           # Remove empty channels
           if channel.empty?
-            remove(channel_name)
+            remove(normalized_name)
           end
 
           removed
@@ -128,7 +146,20 @@ module Circed
 
       # Query methods
       def find_user_channels(nickname : String) : Array(Domain::Channel)
-        @@channels.values.select(&.has_member?(nickname))
+        channel_names = @@user_channels[nickname]?
+        return [] of Domain::Channel unless channel_names
+
+        channels = Array(Domain::Channel).new(channel_names.size)
+        channel_names.each do |channel_name|
+          if channel = @@channels[channel_name]?
+            channels << channel
+          end
+        end
+        channels
+      end
+
+      def find_user_channel_names(nickname : String) : Array(String)
+        @@user_channels[nickname]?.try(&.to_a) || [] of String
       end
 
       def find_channels_with_local_users(user_repository : UserRepository) : Array(Domain::Channel)
@@ -167,20 +198,37 @@ module Circed
 
       # Bulk operations
       def remove_user_from_all_channels(nickname : String) : Array(String)
-        affected_channels = Array(String).new
+        channel_names = @@user_channels.delete(nickname)
+        return [] of String unless channel_names
 
-        @@channels.each do |channel_name, channel|
-          if channel.remove_member(nickname)
-            affected_channels << channel_name
+        affected_channels = Array(String).new(channel_names.size)
 
-            # Remove empty channels
-            if channel.empty?
-              remove(channel_name)
-            end
-          end
+        channel_names.each do |channel_name|
+          next unless channel = @@channels[channel_name]?
+          next unless channel.remove_member(nickname)
+
+          affected_channels << channel_name
+          remove(channel_name) if channel.empty?
         end
 
         affected_channels
+      end
+
+      def rename_member(old_nickname : String, new_nickname : String) : Array(String)
+        channel_names = @@user_channels.delete(old_nickname)
+        return [] of String unless channel_names
+
+        renamed_channels = Array(String).new(channel_names.size)
+        channel_names.each do |channel_name|
+          next unless channel = @@channels[channel_name]?
+          next unless modes = channel.members.delete(old_nickname)
+
+          channel.members[new_nickname] = modes
+          index_user_channel(new_nickname, channel_name)
+          renamed_channels << channel_name
+        end
+
+        renamed_channels
       end
 
       def cleanup_empty_channels : Int32
@@ -209,6 +257,22 @@ module Circed
       private def normalize_channel_name(name : String) : String
         # Ensure channel name starts with # if it doesn't already
         name.starts_with?('#') || name.starts_with?('&') ? name : "##{name}"
+      end
+
+      private def index_channel_members(channel_name : String, channel : Domain::Channel) : Void
+        channel.members.each_key { |nickname| index_user_channel(nickname, channel_name) }
+      end
+
+      private def index_user_channel(nickname : String, channel_name : String) : Void
+        channels = @@user_channels[nickname] ||= Set(String).new
+        channels << channel_name
+      end
+
+      private def unindex_user_channel(nickname : String, channel_name : String) : Void
+        return unless channels = @@user_channels[nickname]?
+
+        channels.delete(channel_name)
+        @@user_channels.delete(nickname) if channels.empty?
       end
     end
   end

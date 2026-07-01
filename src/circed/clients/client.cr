@@ -111,15 +111,13 @@ module Circed
       Log.info { message }
       return log_closed_socket_and_exit if closed?
 
-      socket.try(&.puts(message + "\n"))
-      socket.try(&.flush)
+      write_to_socket(message + "\n")
     end
 
     def send_error(message)
       Log.info { "Sending ERROR to #{@nickname}: #{message}" }
       return if closed?
-      socket.try(&.puts("ERROR :#{message}\n"))
-      socket.try(&.flush)
+      write_to_socket("ERROR :#{message}\n")
     end
 
     def notice(message)
@@ -135,8 +133,7 @@ module Circed
       return log_closed_socket_and_exit if closed?
       message = "#{prefix} #{command} #{params.join(" ")}\n"
       Log.info { message }
-      socket.try(&.puts(message))
-      socket.try(&.flush)
+      write_to_socket(message)
     end
 
     def send_message_to_receiver(command, sender_nickname, sender_user, sender_host, params : Array(String))
@@ -155,10 +152,14 @@ module Circed
 
       update_activity
       prefix = FastIRC::Prefix.new(source: sender_nickname, user: sender_user, host: sender_host)
-      FastIRC::Message.new(command, params, prefix: prefix).to_s(current_socket)
-      Log.debug { "sending message to #{sender_nickname}" }
-      log_closed_socket_and_exit if closed?
-      current_socket.flush
+      begin
+        FastIRC::Message.new(command, params, prefix: prefix).to_s(current_socket)
+        Log.debug { "sending message to #{sender_nickname}" }
+        log_closed_socket_and_exit if closed?
+        current_socket.flush
+      rescue ex : IO::Error | IO::TimeoutError
+        close_socket_after_write_error(ex)
+      end
     end
 
     def complete_registration
@@ -208,6 +209,7 @@ module Circed
 
     def ban_match_context : Domain::BanMatchContext?
       return unless nick = nickname
+      channel_repository = Infrastructure::ServiceLocator.channel_repository
 
       if domain_user = Infrastructure::ServiceLocator.user_repository.get(nick)
         return Domain::BanMatchContext.new(
@@ -216,7 +218,7 @@ module Circed
           domain_user.hostname,
           domain_user.realname,
           domain_user.hostmask,
-          channels.map(&.name)
+          channel_repository.find_user_channel_names(nick)
         )
       end
 
@@ -229,7 +231,7 @@ module Circed
         get_hostname || @host || "localhost",
         current_user.realname,
         current_hostmask,
-        channels.map(&.name)
+        channel_repository.find_user_channel_names(nick)
       )
     end
 
@@ -425,6 +427,24 @@ module Circed
       current_socket = socket
       return "localhost" unless current_socket
       Hostname.get_hostname(current_socket) || "localhost"
+    end
+
+    private def write_to_socket(message : String) : Bool
+      return false unless current_socket = socket
+
+      current_socket << message
+      current_socket.flush
+      true
+    rescue ex : IO::Error | IO::TimeoutError
+      close_socket_after_write_error(ex)
+      false
+    end
+
+    private def close_socket_after_write_error(exception : Exception) : Nil
+      Log.debug(exception: exception) { "Closing client socket after write failure" }
+      socket.try(&.close)
+    rescue close_exception : IO::Error
+      Log.debug(exception: close_exception) { "Failed to close client socket after write failure" }
     end
 
     private def get_hostmask : String?
