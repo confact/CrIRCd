@@ -14,6 +14,7 @@ module Circed
     @pingpong : Pingpong?
 
     @buffer = [] of String
+    @disconnected : Bool = false
 
     def initialize(@name : String, @target_host : String, @target_port : Int32, password : String, use_ssl : Bool = false, verify_ssl : Bool = false)
       # Create TCP connection
@@ -512,6 +513,8 @@ module Circed
     end
 
     private def handle_disconnect(reason : String)
+      return if @disconnected
+      @disconnected = true
       return if @name.empty?
 
       # Send SQUIT to notify other servers about the disconnect

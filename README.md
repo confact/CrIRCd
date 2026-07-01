@@ -21,6 +21,7 @@ A Crystal IRC server implementation that follows IRC protocol specifications. Wh
 ### Network & Security
 * **SSL/TLS Support** - Secure connections for clients and servers
 * **Server-to-Server Communication** - Build IRC networks with multiple linked servers
+* **Server Link Recovery** - Configured outgoing links retry with capped backoff
 * **STARTTLS** - Upgrade plain connections to encrypted
 
 ### Planned Features
@@ -185,8 +186,7 @@ STARTTLS
 4. **Monitoring:** Log SSL handshake success/failures for security monitoring
 
 ## Known issues
-* socket errors
-* timeout errors
+* Config reload does not recreate already-running sockets or server links
 
 ## Contributions
 Everyone is welcome to contribute. Fork this repo, make your changes and make a Pull Request explaining what you did and why. And I and others will review it and merge it if it make sense. :)

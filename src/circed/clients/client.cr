@@ -18,6 +18,7 @@ module Circed
     @pingpong : Pingpong?
 
     @buffer : Array(String) = [] of String
+    @shutdown : Bool = false
 
     def initialize(@socket : Network::SSLSocket::IRCSocket?, buffer)
       @buffer = buffer
@@ -206,6 +207,9 @@ module Circed
     end
 
     def shutdown
+      return if @shutdown
+      @shutdown = true
+
       if nickname = self.nickname
         channel_repository = Infrastructure::ServiceLocator.channel_repository
         affected_channels = channel_repository.remove_user_from_all_channels(nickname)

@@ -15,6 +15,8 @@ module Circed
     @@container_initialized : Bool = false
     @@ssl_context : OpenSSL::SSL::Context::Server? = nil
     @@ssl_server : TCPServer? = nil
+    INITIAL_LINK_RETRY_DELAY = 1.second
+    MAX_LINK_RETRY_DELAY     = 30.seconds
 
     def self.start_time
       @@start_time
@@ -250,24 +252,53 @@ module Circed
 
     def self.bootup_servers
       config.linked_servers.each do |linked_server|
-        spawn do
-          begin
-            Log.info { "Attempting to connect to server: #{linked_server.host}:#{linked_server.port} (SSL: #{linked_server.use_ssl?})" }
-            Circed::LinkServer.new(
-              linked_server.host,
-              linked_server.host,
-              linked_server.port,
-              linked_server.link_password,
-              linked_server.use_ssl?,
-              linked_server.verify_ssl?
-            )
-            Log.info { "Successfully connected to server: #{linked_server.host}" }
-          rescue ex
-            Log.error { "Failed to connect to server #{linked_server.host}:#{linked_server.port} - #{ex.message}" }
-            # Could implement retry logic here
-          end
+        spawn supervise_link(linked_server)
+      end
+    end
+
+    private def self.supervise_link(linked_server : LinkedServer)
+      retry_delay = INITIAL_LINK_RETRY_DELAY
+
+      loop do
+        if configured_link_connected?(linked_server)
+          retry_delay = INITIAL_LINK_RETRY_DELAY
+          sleep MAX_LINK_RETRY_DELAY
+          next
+        end
+
+        begin
+          Log.info { "Attempting to connect to server: #{linked_server.host}:#{linked_server.port} (SSL: #{linked_server.use_ssl?})" }
+          Circed::LinkServer.new(
+            linked_server.host,
+            linked_server.host,
+            linked_server.port,
+            linked_server.link_password,
+            linked_server.use_ssl?,
+            linked_server.verify_ssl?
+          )
+          Log.info { "Server link to #{linked_server.host}:#{linked_server.port} disconnected; retrying" }
+          retry_delay = INITIAL_LINK_RETRY_DELAY
+        rescue ex
+          Log.error { "Failed to connect to server #{linked_server.host}:#{linked_server.port} - #{ex.message}; retrying in #{retry_delay}" }
+          sleep retry_delay
+          retry_delay = next_link_retry_delay(retry_delay)
         end
       end
+    end
+
+    private def self.configured_link_connected?(linked_server : LinkedServer) : Bool
+      servers = ServerHandler.servers
+      return servers.any? if config.linked_servers.size == 1
+
+      servers.any? do |server|
+        server.target_host == linked_server.host && server.target_port == linked_server.port ||
+          server.name == linked_server.host
+      end
+    end
+
+    private def self.next_link_retry_delay(current_delay : Time::Span) : Time::Span
+      next_delay = current_delay * 2
+      next_delay > MAX_LINK_RETRY_DELAY ? MAX_LINK_RETRY_DELAY : next_delay
     end
 
     def self.created
