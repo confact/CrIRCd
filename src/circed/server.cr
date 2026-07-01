@@ -39,6 +39,7 @@ module Circed
 
       start_message
       bootup_servers # Connect to configured servers
+      setup_signal_handlers(server)
 
       # Accept connections from both plain and SSL servers
       spawn accept_loop(server, false)
@@ -48,6 +49,21 @@ module Circed
       end
 
       sleep
+    end
+
+    private def self.setup_signal_handlers(server : TCPServer)
+      shutdown = -> {
+        Log.info { "Shutting down server #{name}" }
+        ServerHandler.servers.each(&.close("Server shutting down"))
+        server.close unless server.closed?
+        if ssl_server = @@ssl_server
+          ssl_server.close unless ssl_server.closed?
+        end
+        exit(0)
+      }
+
+      Signal::TERM.trap { shutdown.call }
+      Signal::INT.trap { shutdown.call }
     end
 
     private def self.accept_loop(server : TCPServer, is_ssl : Bool)
@@ -177,12 +193,21 @@ module Circed
 
       if commands.includes?("PASS") && commands.includes?("SERVER")
         :server
-      elsif commands.includes?("NICK") || commands.includes?("USER") || commands.includes?("CAP")
-        # If we see NICK, USER, or CAP, it's likely a client
-        # We'll let the client handling deal with missing commands
+      elsif client_commands?(commands)
+        # Let client command processing handle registration checks and errors.
         :client
       else
         nil
+      end
+    end
+
+    private def self.client_commands?(commands : Set(String)) : Bool
+      commands.any? do |command|
+        {
+          "NICK", "USER", "CAP", "JOIN", "PART", "MODE", "KICK",
+          "TOPIC", "INVITE", "LIST", "WHOIS", "WHO", "NAMES", "AWAY",
+          "STARTTLS", "QUIT", "NOTICE", "PRIVMSG",
+        }.includes?(command)
       end
     end
 
@@ -306,11 +331,11 @@ module Circed
     end
 
     def self.clean_name
-      ":" + config.host
+      ":" + name
     end
 
     def self.name
-      config.host
+      config.server_name || config.host
     end
 
     def self.watch_config_file

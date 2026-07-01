@@ -1,8 +1,13 @@
-# IRC Services Multi-Server Network Setup
+# IRC Services Multi-Server Network Design Note
+
+This document is aspirational. The current source tree does not implement
+ChanServ, UserServ, `services_server`, SQLite-backed services persistence, or
+the `SVS*` synchronization commands described below. Treat this as a design note
+for a future services subsystem, not as supported configuration.
 
 ## Overview
 
-The IRC services (ChanServ, UserServ) are designed to work across multiple servers in an IRC network. Here's how it handles multi-server scenarios:
+The proposed IRC services (ChanServ, UserServ) would work across multiple servers in an IRC network. Here's how that design handles multi-server scenarios:
 
 ## Architecture
 

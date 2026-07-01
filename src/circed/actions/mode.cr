@@ -12,13 +12,12 @@ module Circed
         # Channel mode
         if message.size > 1 && (message[1].starts_with?("+") || message[1].starts_with?("-"))
           mode_string = message[1]
-          mode_target = message[2]?
+          mode_params = message.size > 2 ? message[2..] : [] of String
 
           # Use IRC service for mode changes with full validation
-          irc_service.change_mode(sender, target, mode_string, mode_target)
+          irc_service.change_mode(sender, target, mode_string, mode_params)
         else
-          # Query mode (not implemented yet)
-          Log.info { "Mode query not implemented" }
+          irc_service.query_mode(sender, target)
         end
       else
         # User mode
@@ -28,8 +27,7 @@ module Circed
           # Use IRC service for user mode changes
           irc_service.change_mode(sender, target, mode_string)
         else
-          # Query user mode (not implemented yet)
-          Log.info { "User mode query not implemented" }
+          irc_service.query_mode(sender, target)
         end
       end
     end

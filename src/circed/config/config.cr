@@ -5,6 +5,7 @@ module Circed
     include YAML::Serializable
 
     getter host : String
+    getter server_name : String? = nil
     getter port : Int32
     getter created : Time = Time.utc
     getter max_users : Int32

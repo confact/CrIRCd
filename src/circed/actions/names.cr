@@ -49,24 +49,26 @@ module Circed
     end
 
     private def self.send_names_reply(sender : Client, channel : Domain::Channel)
-      # Build the names list with proper prefixes
-      names = [] of String
+      names_string = String.build do |io|
+        first = true
+        channel.members.each do |nickname, modes|
+          if first
+            first = false
+          else
+            io << ' '
+          end
 
-      channel.members.each do |nickname, modes|
-        prefix = ""
+          if modes.includes?('o')
+            io << '@'
+          elsif modes.includes?('h')
+            io << '%'
+          elsif modes.includes?('v')
+            io << '+'
+          end
 
-        # Add channel operator prefix
-        if modes.includes?("o")
-          prefix = "@"
-        elsif modes.includes?("v")
-          prefix = "+"
+          io << nickname
         end
-
-        names << "#{prefix}#{nickname}"
       end
-
-      # RFC 1459 says names should be separated by spaces
-      names_string = names.join(" ")
 
       # Determine channel type symbol
       channel_type = channel.secret? ? "@" : "="

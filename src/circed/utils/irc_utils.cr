@@ -14,7 +14,7 @@ module Circed
         NICKNAME_IN_USE        = "Nickname is already in use"
         CANNOT_SEND_TO_CHANNEL = "Cannot send to channel"
         INVITE_ONLY_CHANNEL    = "Cannot join channel (+i)"
-        BANNED_FROM_CHANNEL    = "You are banned from this channel"
+        BANNED_FROM_CHANNEL    = "Cannot join channel (+b)"
         CHANNEL_HAS_PASSWORD   = "Channel has a password"
         CHANNEL_IS_FULL        = "Channel is full"
         UNKNOWN_COMMAND        = "Unknown command"

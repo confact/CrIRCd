@@ -61,6 +61,7 @@ module Circed
                 end
 
       handshake(password)
+      setup([@name])
       listen
     end
 
@@ -161,16 +162,24 @@ module Circed
     def listen : Nil
       return unless socket_ref = socket
 
-      until socket_ref.closed?
-        FastIRC.parse(socket_ref) do |payload|
-          dispatch_command(payload)
-        end
+      begin
+        until socket_ref.closed?
+          FastIRC.parse(socket_ref) do |payload|
+            dispatch_command(payload)
+          end
 
-        if closed?
-          Log.info { "Server connection closed: #{@name}" }
-          handle_disconnect("Connection lost")
-          break
+          if closed?
+            Log.info { "Server connection closed: #{@name}" }
+            handle_disconnect("Connection lost")
+            break
+          end
         end
+      rescue ex : IO::Error | OpenSSL::SSL::Error
+        Log.warn { "Server connection lost for #{@name}: #{ex.message}" }
+        handle_disconnect("Connection lost")
+      rescue ex
+        Log.error { "Server link #{@name} failed: #{ex.message}" }
+        handle_disconnect("Connection error")
       end
     end
 
@@ -180,7 +189,7 @@ module Circed
         handle_connection_commands(payload)
       when "SERVER", "SQUIT"
         handle_server_commands(payload)
-      when "PRIVMSG", "TOPIC", "AWAY"
+      when "PRIVMSG", "NOTICE", "TOPIC", "AWAY"
         handle_messaging_commands(payload)
       when "JOIN", "PART", "QUIT", "NICK", "MODE"
         handle_user_state_change(payload)
@@ -215,8 +224,8 @@ module Circed
 
     private def handle_messaging_commands(payload)
       case payload.command
-      when "PRIVMSG"
-        forward_message_to_peers(payload)
+      when "PRIVMSG", "NOTICE"
+        handle_message_delivery(payload)
       when "TOPIC"
         handle_topic_change(payload)
       when "AWAY"
@@ -253,6 +262,22 @@ module Circed
     end
 
     def handle_user_state_change(payload)
+      user_introduction = user_introduction?(payload)
+
+      if payload.command == "NICK" && !user_introduction
+        deliver_state_change_to_local_users(payload)
+        handle_nick_change(payload)
+        forward_message_to_peers(payload)
+        return
+      end
+
+      if payload.command == "QUIT"
+        deliver_state_change_to_local_users(payload)
+        handle_quit_message(payload)
+        forward_message_to_peers(payload)
+        return
+      end
+
       case payload.command
       when "NICK"
         handle_nick_change(payload)
@@ -268,11 +293,16 @@ module Circed
 
       # Forward to other servers and local clients
       forward_message_to_peers(payload)
-      deliver_state_change_to_local_users(payload)
+      deliver_state_change_to_local_users(payload) unless user_introduction
     end
 
     def handle_nick_change(payload)
       return if payload.params.empty?
+
+      if user_introduction?(payload)
+        handle_user_introduction(payload)
+        return
+      end
 
       old_nick = extract_nickname(payload)
       new_nick = payload.params[0]
@@ -291,7 +321,38 @@ module Circed
         end
       end
 
+      Infrastructure::ServiceLocator.channel_repository.all.each do |channel|
+        if modes = channel.members.delete(old_nick)
+          channel.members[new_nick] = modes
+        end
+      end
+
       Log.debug { "Nick change: #{old_nick} -> #{new_nick}" }
+    end
+
+    private def handle_user_introduction(payload)
+      return if payload.params.size < 7
+
+      nickname = payload.params[0]
+      hopcount = payload.params[1].to_i? || 1
+      username = payload.params[2]
+      hostname = payload.params[3]
+      modes = payload.params[5]
+      realname = payload.params[6..]?.try(&.join(" ")) || ""
+      realname = realname.lstrip(':')
+
+      Network::NetworkState.add_user(nickname, username, hostname, realname, @name, hopcount)
+
+      if modes.starts_with?('+')
+        user = Network::NetworkState.get_user(nickname)
+        modes[1..].each_char { |mode| user.try(&.modes.<<(mode)) }
+      end
+
+      Log.debug { "Introduced remote user #{nickname} from #{@name}" }
+    end
+
+    private def user_introduction?(payload) : Bool
+      payload.command == "NICK" && payload.prefix.nil? && payload.params.size >= 7
     end
 
     def handle_join_message(payload)
@@ -301,6 +362,8 @@ module Circed
       channel_name = payload.params[0]
 
       Network::NetworkState.join_user_to_channel(nickname, channel_name)
+      channel = Infrastructure::ServiceLocator.channel_repository.create_channel(channel_name)
+      channel.add_member(nickname) unless channel.has_member?(nickname)
       Log.debug { "User #{nickname} joined #{channel_name}" }
     end
 
@@ -311,6 +374,7 @@ module Circed
       channel_name = payload.params[0]
 
       Network::NetworkState.part_user_from_channel(nickname, channel_name)
+      Infrastructure::ServiceLocator.channel_repository.part_user(channel_name, nickname)
       Log.debug { "User #{nickname} parted #{channel_name}" }
     end
 
@@ -318,6 +382,7 @@ module Circed
       nickname = extract_nickname(payload)
 
       Network::NetworkState.remove_user(nickname)
+      Infrastructure::ServiceLocator.channel_repository.remove_user_from_all_channels(nickname)
       Log.debug { "User #{nickname} quit" }
     end
 
@@ -482,8 +547,8 @@ module Circed
       close
     end
 
-    def handle_privmsg(payload)
-      # Forward PRIVMSG to all other connected servers except the sender
+    def handle_message_delivery(payload)
+      # Forward message to all other connected servers except the sender
       forward_message_to_peers(payload)
 
       # Forward to local clients if the target is a local user/channel
@@ -520,7 +585,7 @@ module Circed
             # Don't send message back to the sender if they're local
             next if local_nick == sender_nick
 
-            formatted_message = format_privmsg_for_client(payload, message)
+            formatted_message = format_message_for_client(payload, message)
             client.send_message(formatted_message)
           end
         end
@@ -530,22 +595,22 @@ module Circed
     private def deliver_to_local_user(target_nick : String, payload, sender_nick : String, message : String)
       user_repository = Infrastructure::ServiceLocator.user_repository
       if client = user_repository.get_client(target_nick)
-        formatted_message = format_privmsg_for_client(payload, message)
+        formatted_message = format_message_for_client(payload, message)
         client.send_message(formatted_message)
       end
     end
 
-    private def format_privmsg_for_client(payload, message : String) : String
-      # Format: ":sender!user@host PRIVMSG target :message"
+    private def format_message_for_client(payload, message : String) : String
+      # Format: ":sender!user@host COMMAND target :message"
       sender_nick = extract_nickname(payload)
       target = payload.params[0]
 
       if user_info = Network::NetworkState.get_user(sender_nick)
         hostmask = "#{sender_nick}!#{user_info.username}@#{user_info.hostname}"
-        ":#{hostmask} PRIVMSG #{target} :#{message}"
+        ":#{hostmask} #{payload.command} #{target} :#{message}"
       else
         # Fallback if user info not available
-        ":#{sender_nick}!unknown@unknown PRIVMSG #{target} :#{message}"
+        ":#{sender_nick}!unknown@unknown #{payload.command} #{target} :#{message}"
       end
     end
 
@@ -622,10 +687,26 @@ module Circed
 
       if user_info = Network::NetworkState.get_user(sender_nick)
         hostmask = "#{sender_nick}!#{user_info.username}@#{user_info.hostname}"
-        ":#{hostmask} #{payload.command} #{payload.params.join(" ")}"
+        ":#{hostmask} #{payload.command}#{format_params(payload.params)}"
       else
         # Fallback
-        ":#{sender_nick}!unknown@unknown #{payload.command} #{payload.params.join(" ")}"
+        ":#{sender_nick}!unknown@unknown #{payload.command}#{format_params(payload.params)}"
+      end
+    end
+
+    private def format_params(params : Array(String)) : String
+      return "" if params.empty?
+
+      String.build do |io|
+        params.each_with_index do |param, index|
+          io << ' '
+          if index == params.size - 1 && (param.empty? || param.includes?(' ') || param.starts_with?(':'))
+            io << ':'
+            io << param.lstrip(':')
+          else
+            io << param
+          end
+        end
       end
     end
 

@@ -7,7 +7,7 @@ module Circed
     GOOGLE_DNS_PORT   = 53_i32
 
     def self.get_hostname(ip_address : String) : String
-      return ip_address if {"localhost", "::1", "127.0.0.1"}.includes?(ip_address)
+      return "localhost" if {"localhost", "::1", "127.0.0.1"}.includes?(ip_address)
 
       buffer = uninitialized UInt8[4096_i32]
       reverse_dns = ip_to_reverse_dns(ip_address)

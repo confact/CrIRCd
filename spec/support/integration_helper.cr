@@ -15,7 +15,7 @@ module IntegrationHelper
     getter config_file : String
     getter log_file : String
 
-    def initialize(@name : String, @port : Int32, @ssl_port : Int32)
+    def initialize(@name : String, @port : Int32, @ssl_port : Int32, @ssl_enabled : Bool = true)
       @config_file = "spec/fixtures/#{@name}_config.yml"
       @log_file = "spec/logs/#{@name}.log"
     end
@@ -47,13 +47,14 @@ module IntegrationHelper
 
     def stop
       if proc = @process
-        proc.signal(Signal::TERM)
-        Fiber.yield # Give the process time to handle the signal
-        begin
-          proc.wait
-        rescue
-          # Process may have already exited
+        TestClient.close_for_ports(@port, @ssl_port)
+        proc.signal(Signal::TERM) rescue nil
+        unless wait_until_stopped
+          proc.signal(Signal::KILL) rescue nil
+          wait_until_stopped
         end
+        proc.wait rescue nil
+        sleep 1.second
         @process = nil
       end
     end
@@ -86,6 +87,10 @@ module IntegrationHelper
         begin
           socket = TCPSocket.new("localhost", @port)
           socket.close
+          if @ssl_enabled
+            ssl_socket = TCPSocket.new("localhost", @ssl_port)
+            ssl_socket.close
+          end
           return true
         rescue IO::Error
           if Time.monotonic > deadline
@@ -95,10 +100,23 @@ module IntegrationHelper
         end
       end
     end
+
+    private def wait_until_stopped(timeout : Time::Span = 2.seconds) : Bool
+      deadline = Time.monotonic + timeout
+
+      loop do
+        return true unless running?
+        return false if Time.monotonic > deadline
+
+        sleep 0.05.seconds
+      end
+    end
   end
 
   # IRC Test Client for integration tests
   class TestClient
+    @@clients = [] of TestClient
+
     getter nickname : String
     getter socket : IO
     getter responses : Array(String) = [] of String
@@ -109,7 +127,16 @@ module IntegrationHelper
 
     def initialize(@nickname : String, @host : String = "localhost", @port : Int32 = 6667, @ssl : Bool = true)
       @socket = connect
+      @@clients << self
     end
+
+    def self.close_for_ports(*ports : Int32)
+      @@clients.each do |client|
+        client.close if ports.includes?(client.port)
+      end
+    end
+
+    getter port : Int32
 
     private def connect : IO
       tcp = TCPSocket.new(@host, @port)
@@ -135,6 +162,7 @@ module IntegrationHelper
     end
 
     def send(command : String)
+      raise IO::Error.new("socket is closed") if @socket.closed?
       @socket.write("#{command}\r\n".to_slice)
       @socket.flush
       self
@@ -166,15 +194,13 @@ module IntegrationHelper
       deadline = Time.monotonic + timeout
 
       # First, check any previously buffered responses
-      if cached = find_in_buffer(pattern)
+      if cached = consume_from_buffer(pattern)
         return cached
       end
 
       # Read new responses until we find a match or timeout
       while Time.monotonic < deadline
         if response = read_line(0.1.seconds)
-          @responses << response
-
           # Auto-respond to PING
           if response.starts_with?("PING")
             pong_target = response.split(" ", 2)[1]?
@@ -182,6 +208,8 @@ module IntegrationHelper
           end
 
           return response if response.matches?(pattern)
+
+          @responses << response
         end
         sleep 0.01.seconds
       end
@@ -191,6 +219,7 @@ module IntegrationHelper
 
     def wait_for_registration(timeout : Time::Span = 2.seconds) : String?
       response = wait_for_response(/001.*Welcome/, timeout)
+      @responses.unshift(response) if response
       @registered = !response.nil?
       response
     end
@@ -233,6 +262,12 @@ module IntegrationHelper
         # Print buffered responses to aid debugging
         puts "[#{@nickname}] buffered responses before timeout:"
         @responses.each { |resp| puts resp }
+        Dir["spec/logs/*.log"].sort.each do |log_file|
+          puts "--- #{log_file} ---"
+          File.each_line(log_file) { |line| puts line }
+        rescue ex
+          puts "Could not read #{log_file}: #{ex.message}"
+        end
         raise "Expected response matching #{pattern} but received none within #{timeout}"
       end
       response
@@ -256,6 +291,11 @@ module IntegrationHelper
         Log.debug { "Client #{@nickname} unexpectedly received: #{response}" }
       end
       response.should be_nil
+    end
+
+    private def consume_from_buffer(pattern : Regex) : String?
+      index = @responses.index { |response| response.matches?(pattern) }
+      index ? @responses.delete_at(index) : nil
     end
 
     private def find_in_buffer(pattern : Regex) : String?
@@ -398,7 +438,7 @@ module IntegrationHelper
         config.ssl_cert("spec/fixtures/ssl/server1/server.crt", "spec/fixtures/ssl/server1/server.key") if ssl_enabled
       end
 
-      server = TestServer.new("test_server1", 16667, 16697)
+      server = TestServer.new("test_server1", 16667, 16697, ssl_enabled)
       servers << server
       server.start
     end
@@ -427,8 +467,8 @@ module IntegrationHelper
       end
 
       # Start servers
-      server1 = TestServer.new("test_server1", 16667, 16697)
-      server2 = TestServer.new("test_server2", 17667, 17697)
+      server1 = TestServer.new("test_server1", 16667, 16697, ssl_enabled)
+      server2 = TestServer.new("test_server2", 17667, 17697, ssl_enabled)
 
       servers << server1 << server2
 
@@ -448,6 +488,8 @@ module IntegrationHelper
     def teardown
       clients.each(&.close)
       servers.each(&.stop)
+      clients.clear
+      servers.clear
       cleanup_fixtures
     end
 

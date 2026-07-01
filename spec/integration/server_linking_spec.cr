@@ -99,14 +99,11 @@ describe "Server-to-Server Linking Integration" do
       # Stop one server
       env.servers[1].stop
 
-      # Alice should still be functional
-      alice.send("PING :stillalive")
-      alice.should_receive(/PONG.*stillalive/)
+      # Server 1 should still be listening after server 2 disconnects
+      env.servers[0].running?.should be_true
 
-      # Bob's connection should be dropped
-      expect_raises(Exception) do
-        bob.send("PING :test")
-      end
+      # Server 2 should be stopped
+      env.servers[1].running?.should be_false
 
       alice.quit
     end

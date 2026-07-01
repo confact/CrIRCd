@@ -25,10 +25,11 @@ A Crystal IRC server implementation that follows IRC protocol specifications. Wh
 
 ### Planned Features
 * Additional channel and user modes
-* GLines support
-* Server operators (OPs)
-* NickServ & ChanServ
-* Extended ban lookups
+
+### Not Implemented
+* IRC operator authentication and oper-only commands
+* Network-wide GLines and extended ban lookups
+* NickServ, ChanServ, and persistent IRC services
 
 
 ## Quick Start
@@ -143,8 +144,6 @@ STARTTLS
 4. **Monitoring:** Log SSL handshake success/failures for security monitoring
 
 ## Known issues
-* NAMES list of users in channel is not working correctly
-* Some things like NICK change won't update users in channels of the change yet
 * socket errors
 * timeout errors
 

@@ -33,9 +33,7 @@ module Circed
     end
 
     def ping(params : Array(String))
-      handle_heartbeat("PING", @last_pong) do
-        send_message(create_pong_message(params))
-      end
+      send_message(create_pong_message(params))
       @last_ping = Time.utc
     end
 

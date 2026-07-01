@@ -3,6 +3,7 @@ require "../../src/circed/network/ssl_socket"
 
 class DummySocket < IPSocket
   @receive_data : Array(String) = [] of String
+  getter sent_data : Array(String) = [] of String
   @current_index : Int32 = 0
   @closed : Bool = false
 
@@ -27,12 +28,14 @@ class DummySocket < IPSocket
   end
 
   def write(slice : Bytes) : Nil
-    slice.size
+    @sent_data << String.new(slice)
+    nil
   end
 
   def puts(data : String)
     # Mock implementation - could store sent data if needed for testing
     return if @closed
+    @sent_data << data
     data.size # Return something truthy like real socket puts
   end
 

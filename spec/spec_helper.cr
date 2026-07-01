@@ -16,10 +16,12 @@ def create_test_client(nickname : String) : Circed::Client
 
   # Directly set the nickname for testing
   client.nickname = nickname
+  client.user = ["test", "0", "*", ":#{nickname}"]
 
   # Create a domain user as well
   domain_user = Circed::Domain::User.new(nickname, "test", "localhost", nickname, "test_server")
   user_repository.add(nickname, domain_user)
+  client.set_hostmask
 
   # Add client to user repository directly instead of through UserHandler
   user_repository.add_client(client)

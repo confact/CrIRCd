@@ -6,6 +6,10 @@ require "../utils/irc_utils"
 module Circed
   module Services
     class IRCService
+      SIMPLE_CHANNEL_MODES = {'i', 'm', 'n', 't', 's', 'p'}
+      USER_CHANNEL_MODES   = {'o', 'h', 'v'}
+      CHANNEL_MODE_ORDER   = {'p', 's', 'i', 'm', 'n', 't', 'k', 'l', 'b'}
+
       def initialize(@user_repository : Repositories::UserRepository,
                      @channel_repository : Repositories::ChannelRepository,
                      @notification_service : NotificationService)
@@ -134,11 +138,15 @@ module Circed
 
         # Update client's nickname
         client.nickname = new_nickname
+        update_channel_membership_nickname(old_nickname, new_nickname)
 
         # Sync with network state
         sync_nick_with_network(old_nickname, new_nickname)
 
         # Send notifications
+        if user = @user_repository.get(new_nickname)
+          client.send_message(":#{old_nickname}!#{user.username}@#{user.hostname} NICK #{new_nickname}")
+        end
         @notification_service.notify_nick_change(old_nickname, new_nickname)
 
         # Propagate to network
@@ -147,6 +155,14 @@ module Circed
         end
 
         true
+      end
+
+      private def update_channel_membership_nickname(old_nickname : String, new_nickname : String)
+        @channel_repository.all.each do |channel|
+          if modes = channel.members.delete(old_nickname)
+            channel.members[new_nickname] = modes
+          end
+        end
       end
 
       # Handle user quit with network sync
@@ -252,20 +268,101 @@ module Circed
       end
 
       # Change channel or user modes with network sync
-      def change_mode(client : Client, target : String, mode_string : String, mode_target : String? = nil) : Bool
+      def change_mode(client : Client, target : String, mode_string : String, mode_params : Array(String) = [] of String) : Bool
         nickname = client.nickname
         return false unless nickname
 
         if target.starts_with?("#") || target.starts_with?("&")
           # Channel mode
-          change_channel_mode(client, target, mode_string, mode_target)
+          change_channel_mode(client, target, mode_string, mode_params)
         else
           # User mode
           change_user_mode(client, target, mode_string)
         end
       end
 
-      private def change_channel_mode(client : Client, channel_name : String, mode_string : String, target : String? = nil) : Bool
+      def query_mode(client : Client, target : String) : Bool
+        nickname = client.nickname
+        return false unless nickname
+
+        if target.starts_with?("#") || target.starts_with?("&")
+          query_channel_mode(client, target, nickname)
+        else
+          query_user_mode(client, target, nickname)
+        end
+      end
+
+      private def query_channel_mode(client : Client, channel_name : String, nickname : String) : Bool
+        channel = @channel_repository.get(channel_name)
+        unless channel
+          Utils::IrcUtils.send_no_such_channel_error(client, channel_name)
+          return false
+        end
+
+        modes, params = build_channel_mode_query(channel)
+        client.send_message(String.build do |io|
+          io << Server.clean_name << ' ' << Numerics::RPL_CHANNELMODEIS << ' ' << nickname << ' ' << channel.name << ' ' << modes
+          params.each do |param|
+            io << ' ' << param
+          end
+        end)
+        client.send_message(
+          Server.clean_name,
+          Numerics::RPL_CREATIONTIME,
+          nickname,
+          channel.name,
+          channel.created_at.to_unix.to_s
+        )
+        true
+      end
+
+      private def query_user_mode(client : Client, target : String, nickname : String) : Bool
+        unless target == nickname
+          Utils::IrcUtils.send_users_dont_match_error(client)
+          return false
+        end
+
+        user = @user_repository.get(nickname)
+        unless user
+          Utils::IrcUtils.send_no_such_nick_error(client, target)
+          return false
+        end
+
+        client.send_message(
+          Server.clean_name,
+          Numerics::RPL_UMODEIS,
+          nickname,
+          ":#{build_user_mode_string(user)}"
+        )
+        true
+      end
+
+      private def build_channel_mode_query(channel : Domain::Channel) : Tuple(String, Array(String))
+        params = [] of String
+        modes = String.build do |io|
+          io << '+'
+          CHANNEL_MODE_ORDER.each do |mode_char|
+            next unless channel.modes.includes?(mode_char)
+
+            case mode_char
+            when 'k'
+              next unless password = channel.password
+              params << password
+            when 'l'
+              next unless limit = channel.user_limit
+              params << limit.to_s
+            when 'b'
+              next if channel.ban_list.empty?
+            end
+
+            io << mode_char
+          end
+        end
+
+        {modes, params}
+      end
+
+      private def change_channel_mode(client : Client, channel_name : String, mode_string : String, mode_params : Array(String) = [] of String) : Bool
         return false unless nickname = client.nickname
 
         channel = @channel_repository.get(channel_name)
@@ -289,39 +386,110 @@ module Circed
         # Parse mode string
         return false if mode_string.size < 2
 
-        adding = mode_string.starts_with?("+")
-        mode_char = mode_string[1]
+        adding = true
+        parameter_index = 0
+        last_sign = '\0'
+        applied_modes = String.build do |io|
+          mode_string.each_char do |mode_char|
+            case mode_char
+            when '+'
+              adding = true
+            when '-'
+              adding = false
+            else
+              parameter = nil
+              if channel_mode_needs_parameter?(mode_char, adding)
+                parameter = mode_params[parameter_index]?
+                parameter_index += 1
+                next unless parameter
+              end
 
+              next unless apply_channel_mode(channel, mode_char, adding, parameter)
+
+              sign = adding ? '+' : '-'
+              if sign != last_sign
+                io << sign
+                last_sign = sign
+              end
+              io << mode_char
+            end
+          end
+        end
+
+        return false if applied_modes.empty?
+
+        # Send notifications
+        @notification_service.notify_mode_change(channel_name, applied_modes, nickname, mode_params[0...parameter_index])
+
+        # Propagate to network
+        mode_message = String.build do |io|
+          io << ':' << (client.hostmask || "") << " MODE " << channel_name << ' ' << applied_modes
+          mode_params[0...parameter_index].each do |parameter|
+            io << ' ' << parameter
+          end
+        end
+        propagate_to_network(mode_message)
+
+        true
+      end
+
+      private def channel_mode_needs_parameter?(mode_char : Char, adding : Bool) : Bool
         case mode_char
-        when 'i', 'm', 'n', 't', 's', 'p' # Simple channel modes
+        when 'o', 'h', 'v', 'b'
+          true
+        when 'k'
+          adding
+        when 'l'
+          adding
+        else
+          false
+        end
+      end
+
+      private def apply_channel_mode(channel : Domain::Channel, mode_char : Char, adding : Bool, parameter : String?) : Bool
+        if SIMPLE_CHANNEL_MODES.includes?(mode_char)
           if adding
             channel.modes << mode_char
           else
             channel.modes.delete(mode_char)
           end
-        when 'o', 'h', 'v' # User modes in channel
-          return false unless target && channel.has_member?(target)
+          return true
+        end
 
-          target_modes = channel.members[target]
+        if USER_CHANNEL_MODES.includes?(mode_char)
+          return false unless parameter && channel.has_member?(parameter)
+
+          target_modes = channel.members[parameter]
           if adding
             target_modes << mode_char
           else
             target_modes.delete(mode_char)
           end
-        else
-          return false
+          return true
         end
 
-        # Send notifications
-        targets = target ? [target] : [] of String
-        @notification_service.notify_mode_change(channel_name, mode_string, nickname, targets)
-
-        # Propagate to network
-        mode_message = ":#{client.hostmask} MODE #{channel_name} #{mode_string}"
-        mode_message += " #{target}" if target
-        propagate_to_network(mode_message)
-
-        true
+        case mode_char
+        when 'b'
+          return false unless parameter
+          adding ? channel.add_ban(parameter) : channel.remove_ban(parameter)
+          true
+        when 'k'
+          return false if adding && parameter.nil?
+          channel.password = adding ? parameter : nil
+          true
+        when 'l'
+          if adding
+            return false unless parameter
+            limit = parameter.to_i?
+            return false unless limit && limit > 0
+            channel.user_limit = limit
+          else
+            channel.user_limit = nil
+          end
+          true
+        else
+          false
+        end
       end
 
       private def change_user_mode(client : Client, target : String, mode_string : String) : Bool
@@ -458,6 +626,7 @@ module Circed
             user.realname,
             user.server
           )
+          propagate_user_to_network(nickname, user)
           true
         else
           false
@@ -530,6 +699,17 @@ module Circed
         end
       end
 
+      private def propagate_user_to_network(nickname : String, user : Domain::User)
+        modes = user.modes.empty? ? "+" : "+#{user.modes.join}"
+        message = String.build do |io|
+          io << "NICK " << nickname << " 1 "
+          io << user.username << ' ' << user.hostname << ' '
+          io << Server.name << ' ' << modes << " :" << user.realname
+        end
+
+        propagate_to_network(message)
+      end
+
       private def route_channel_message(sender : Client, channel_name : String, message : String) : Bool
         return false unless sender_nick = sender.nickname
 
@@ -574,12 +754,9 @@ module Circed
           if Network::NetworkState.get_user(target)
             # Route to appropriate server
             if target_server = find_user_server(target)
-              route_to_server = find_route_to_server(target_server)
-              if route_to_server
-                # Find the server by name
-                server = ServerHandler.servers.find { |server_handler| server_handler.name == route_to_server }
-                if server
-                  server.safe_send(":#{sender.hostmask} PRIVMSG #{target} :#{message}")
+              server = find_server_for_route(target_server)
+              if server
+                if server.safe_send(":#{sender.hostmask} PRIVMSG #{target} :#{message}")
                   true
                 else
                   Utils::IrcUtils.send_no_such_nick_error(sender, target)
@@ -630,16 +807,9 @@ module Circed
           if Network::NetworkState.get_user(target)
             # Route to appropriate server
             if target_server = find_user_server(target)
-              route_to_server = find_route_to_server(target_server)
-              if route_to_server
-                # Find the server by name
-                server = ServerHandler.servers.find { |server_handler| server_handler.name == route_to_server }
-                if server
-                  server.safe_send(":#{sender.hostmask} NOTICE #{target} :#{message}")
-                  true
-                else
-                  false
-                end
+              server = find_server_for_route(target_server)
+              if server
+                server.safe_send(":#{sender.hostmask} NOTICE #{target} :#{message}") ? true : false
               else
                 false
               end
@@ -659,6 +829,15 @@ module Circed
 
       private def find_route_to_server(target_server : String) : String?
         Network::NetworkState.route_to_server(target_server)
+      end
+
+      private def find_server_for_route(target_server : String) : LinkServer?
+        route_to_server = find_route_to_server(target_server)
+        if route_to_server
+          ServerHandler.servers.find { |server_handler| server_handler.name == route_to_server }
+        elsif !ServerHandler.servers.empty?
+          ServerHandler.servers.first
+        end
       end
 
       def add_channel_invite(channel_name : String, user_nickname : String) : Nil

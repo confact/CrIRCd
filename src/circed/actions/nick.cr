@@ -38,12 +38,13 @@ module Circed
             user_info.name,
             hostname,
             user_info.realname,
-            Server.config.host
+            Server.name
           )
           user_repo.add(new_nickname, domain_user)
+          sender.set_hostmask
         end
 
-        # Note: Registration completion is handled elsewhere in the system
+        sender.complete_registration
       else
         # Use IRC service for nickname change (it will update the client's nickname)
         irc_service = Infrastructure::ServiceLocator.irc_service

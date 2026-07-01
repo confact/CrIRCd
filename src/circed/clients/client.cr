@@ -84,24 +84,15 @@ module Circed
       username = users_messages.first
       realname = users_messages[3].sub(":", "")
       @user = User.new(self, mode, username, realname)
+      set_hostmask
       Log.debug { "Set user to: #{user}" }
 
       # Create domain user in repository if we have a nickname
       if nickname = @nickname
-        hostname = @host || "localhost"
-        domain_user = Domain::User.new(
-          nickname,
-          username,
-          hostname,
-          realname,
-          Server.config.host
-        )
-        user_repo = Infrastructure::ServiceLocator.user_repository
-        user_repo.add(nickname, domain_user)
+        register_domain_user(nickname, username, realname)
       end
 
-      Circed::Server.welcome_message(self)
-      @pingpong = Pingpong.new(self)
+      complete_registration
     end
 
     def set_hostmask
@@ -136,6 +127,7 @@ module Circed
 
     def nickname=(new_nickname)
       @nickname = new_nickname
+      set_hostmask
     end
 
     def send_message(prefix, command, *params)
@@ -143,6 +135,7 @@ module Circed
       message = "#{prefix} #{command} #{params.join(" ")}\n"
       Log.info { message }
       socket.try(&.puts(message))
+      socket.try(&.flush)
     end
 
     def send_message_to_receiver(command, sender_nickname, sender_user, sender_host, params : Array(String))
@@ -179,6 +172,8 @@ module Circed
       # Send MOTD and LUSERS
       Server.lusers(self)
       Server.motd(self)
+
+      @pingpong = Pingpong.new(self)
 
       Log.info { "User #{nickname}!#{user} registered from #{host}" }
     end
@@ -233,7 +228,7 @@ module Circed
 
     private def run_commands(payload : FastIRC::Message)
       case payload.command
-      when "LIST", "WHOIS", "WHO", "NAMES"
+      when "LIST", "WHOIS", "WHO", "NAMES", "LINKS", "STATS", "TIME", "VERSION", "ADMIN"
         handle_query_commands(payload)
       when "NICK", "USER", "AWAY", "CAP", "PASS"
         handle_user_commands(payload)
@@ -259,6 +254,16 @@ module Circed
         Actions::Who.call(self, payload.params.first) unless payload.params.empty?
       when "NAMES"
         Actions::Names.call(self, payload.params.first) unless payload.params.empty?
+      when "LINKS"
+        Commands::ServerCommands.links(self, payload.params)
+      when "STATS"
+        Commands::ServerCommands.stats(self, payload.params)
+      when "TIME"
+        Commands::ServerCommands.time(self, payload.params)
+      when "VERSION"
+        Commands::ServerCommands.version(self, payload.params)
+      when "ADMIN"
+        Commands::ServerCommands.admin(self, payload.params)
       end
     end
 
@@ -293,7 +298,8 @@ module Circed
         end
         self.user = payload.params
       when "AWAY"
-        Actions::Away.call(self, payload.params.join(" ")) unless payload.params.empty?
+        away_message = payload.params.empty? ? nil : payload.params.join(" ")
+        Actions::Away.call(self, away_message)
       when "CAP"
         return if payload.params.empty?
         Actions::Cap.call(self, payload.params)
@@ -389,12 +395,31 @@ module Circed
     end
 
     private def get_hostmask : String?
-      hostname = get_hostname
-      "#{nickname}!#{user.try(&.name)}@#{hostname}"
+      if (nick = nickname) && (domain_user = Infrastructure::ServiceLocator.user_repository.get(nick))
+        return domain_user.hostmask
+      end
+
+      nick = nickname || ""
+      username = user.try(&.name) || ""
+      hostname = get_hostname || "localhost"
+      Utils::IrcUtils.format_hostmask(nick, username, hostname)
     end
 
     private def log_closed_socket_and_exit
       Log.debug { "Socket is closed, can't send message" }
+    end
+
+    private def register_domain_user(nickname : String, username : String, realname : String)
+      hostname = get_hostname || @host || "localhost"
+      domain_user = Domain::User.new(
+        nickname,
+        username,
+        hostname,
+        realname,
+        Server.name
+      )
+      Infrastructure::ServiceLocator.user_repository.add(nickname, domain_user)
+      set_hostmask
     end
   end
 end
