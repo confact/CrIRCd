@@ -80,14 +80,30 @@ module Circed
       # Wrap with SSL if needed
       wrapped_connection = if is_ssl && (ctx = @@ssl_context)
                              begin
+                               # Set a timeout for SSL handshake
+                               connection.read_timeout = 10.seconds
+                               connection.write_timeout = 10.seconds
+
                                ssl_socket = Network::SSLSocket.wrap_server_socket(connection, ctx)
-                               Log.info { "SSL handshake completed with #{remote_addr}" }
+
+                               # Verify handshake completed successfully
                                if peer_info = Network::SSLSocket.get_peer_info(ssl_socket)
-                                 Log.info { "SSL peer info: #{peer_info}" }
+                                 Log.info { "SSL handshake completed with #{remote_addr} (#{peer_info})" }
+                               else
+                                 Log.info { "SSL handshake completed with #{remote_addr}" }
                                end
+
                                ssl_socket
+                             rescue ex : OpenSSL::SSL::Error
+                               Log.error { "SSL handshake failed with #{remote_addr}: #{ex.message}" }
+                               connection.close
+                               return
+                             rescue ex : IO::TimeoutError
+                               Log.error { "SSL handshake timed out with #{remote_addr}" }
+                               connection.close
+                               return
                              rescue ex
-                               Log.error { "SSL handshake failed: #{ex.message}" }
+                               Log.error { "SSL connection failed with #{remote_addr}: #{ex.message}" }
                                connection.close
                                return
                              end
@@ -147,7 +163,7 @@ module Circed
 
       # If we've read any commands but couldn't determine type, assume client.
       # Client command processing will handle registration checks and errors.
-      if buffer.any?
+      if !buffer.empty?
         Log.debug { "Defaulting to client connection (no PASS/SERVER detected)" }
         return :client
       end

@@ -21,16 +21,41 @@ module Circed
 
       # Wrap with SSL if needed
       @socket = if use_ssl
-                  # Create a minimal SSL config for client connections
-                  ssl_yaml = <<-YAML
+                  begin
+                    # Create a minimal SSL config for client connections
+                    ssl_yaml = <<-YAML
         enabled: true
         verify_mode: #{verify_ssl}
         YAML
-                  ssl_config = Config::SSLConfig.from_yaml(ssl_yaml)
-                  context = Network::SSLSocket.create_client_context(ssl_config)
-                  ssl_socket = Network::SSLSocket.wrap_client_socket(tcp_socket, context, @target_host)
-                  Log.info { "Established SSL connection to #{@target_host}:#{@target_port}" }
-                  ssl_socket
+                    ssl_config = Config::SSLConfig.from_yaml(ssl_yaml)
+
+                    # Set connection timeout
+                    tcp_socket.read_timeout = 15.seconds
+                    tcp_socket.write_timeout = 15.seconds
+
+                    context = Network::SSLSocket.create_client_context(ssl_config)
+                    ssl_socket = Network::SSLSocket.wrap_client_socket(tcp_socket, context, @target_host)
+
+                    if peer_info = Network::SSLSocket.get_peer_info(ssl_socket)
+                      Log.info { "Established SSL connection to #{@target_host}:#{@target_port} (#{peer_info})" }
+                    else
+                      Log.info { "Established SSL connection to #{@target_host}:#{@target_port}" }
+                    end
+
+                    ssl_socket
+                  rescue ex : OpenSSL::SSL::Error
+                    Log.error { "SSL connection failed to #{@target_host}:#{@target_port}: #{ex.message}" }
+                    tcp_socket.close
+                    raise ex
+                  rescue ex : IO::TimeoutError
+                    Log.error { "SSL connection timed out to #{@target_host}:#{@target_port}" }
+                    tcp_socket.close
+                    raise "SSL connection timeout"
+                  rescue ex
+                    Log.error { "Failed to establish SSL connection to #{@target_host}:#{@target_port}: #{ex.message}" }
+                    tcp_socket.close
+                    raise ex
+                  end
                 else
                   tcp_socket
                 end

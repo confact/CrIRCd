@@ -61,13 +61,12 @@ module IntegrationHelper
     def running?
       # Consider the server running if the port is accepting connections
       # This is more reliable across platforms than checking the process table
-      begin
-        socket = TCPSocket.new("localhost", @port)
-        socket.close
-        true
-      rescue IO::Error
-        false
-      end
+
+      socket = TCPSocket.new("localhost", @port)
+      socket.close
+      true
+    rescue IO::Error
+      false
     end
 
     def pid
@@ -207,38 +206,36 @@ module IntegrationHelper
     end
 
     def read_line(timeout : Time::Span = 1.second) : String?
-      begin
-        # Set socket timeout for different socket types
-        case socket = @socket
-        when TCPSocket
-          socket.read_timeout = timeout
-        when OpenSSL::SSL::Socket::Client
-          socket.read_timeout = timeout
-        end
+      # Set socket timeout for different socket types
+      case socket = @socket
+      when TCPSocket
+        socket.read_timeout = timeout
+      when OpenSSL::SSL::Socket::Client
+        socket.read_timeout = timeout
+      end
 
-        if line = @socket.gets
-          line.strip
-        else
-          nil
-        end
-      rescue IO::TimeoutError
-        nil
-      rescue IO::Error
-        nil
-      rescue
+      if line = @socket.gets
+        line.strip
+      else
         nil
       end
+    rescue IO::TimeoutError
+      nil
+    rescue IO::Error
+      nil
+    rescue
+      nil
     end
 
     def expect_response(pattern : Regex, timeout : Time::Span = 5.seconds) : String
       response = wait_for_response(pattern, timeout)
       if response.nil?
         # Print buffered responses to aid debugging
-        puts "[#{@nickname}] buffered responses before timeout:" 
-        @responses.each { |r| puts r }
+        puts "[#{@nickname}] buffered responses before timeout:"
+        @responses.each { |resp| puts resp }
+        raise "Expected response matching #{pattern} but received none within #{timeout}"
       end
-      response.should_not be_nil
-      response.not_nil!
+      response
     end
 
     def should_receive(pattern : Regex, timeout : Time::Span = 5.seconds) : String
@@ -262,7 +259,7 @@ module IntegrationHelper
     end
 
     private def find_in_buffer(pattern : Regex) : String?
-      @responses.find { |r| r.matches?(pattern) }
+      @responses.find(&.matches?(pattern))
     end
 
     def quit(message = "Test complete")
@@ -467,7 +464,7 @@ module IntegrationHelper
       needs_build = true
       if File.exists?("./circed_test")
         bin_mtime = File.info("./circed_test").modification_time
-        latest_src_mtime = Dir.glob("src/**/*.cr").map { |f| File.info(f).modification_time }.max?
+        latest_src_mtime = Dir.glob("src/**/*.cr").max_of? { |file| File.info(file).modification_time }
         needs_build = latest_src_mtime && latest_src_mtime > bin_mtime
       end
 

@@ -12,6 +12,8 @@ module Circed
     getter signon_time : Time
 
     getter user : User?
+    property? registered : Bool = false
+    property password : String?
 
     @pingpong : Pingpong?
 
@@ -165,6 +167,22 @@ module Circed
       current_socket.flush
     end
 
+    def complete_registration
+      return if registered?
+      return unless nickname && user
+
+      self.registered = true
+
+      # Send welcome messages
+      Server.welcome_message(self)
+
+      # Send MOTD and LUSERS
+      Server.lusers(self)
+      Server.motd(self)
+
+      Log.info { "User #{nickname}!#{user} registered from #{host}" }
+    end
+
     def close
       Log.info { "Closing connection" }
       socket.try(&.close)
@@ -217,7 +235,7 @@ module Circed
       case payload.command
       when "LIST", "WHOIS", "WHO", "NAMES"
         handle_query_commands(payload)
-      when "NICK", "USER", "AWAY", "CAP"
+      when "NICK", "USER", "AWAY", "CAP", "PASS"
         handle_user_commands(payload)
       when "PONG", "PING", "STARTTLS"
         handle_connection_commands(payload)
@@ -246,6 +264,21 @@ module Circed
 
     private def handle_user_commands(payload : FastIRC::Message)
       case payload.command
+      when "PASS"
+        if payload.params.empty?
+          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, "*", "PASS", ":Not enough parameters")
+          return
+        end
+        self.password = payload.params.first
+
+        # Check if password matches server password (if configured)
+        if server_password = Server.config.server_password
+          if password != server_password
+            send_message(Server.clean_name, Numerics::ERR_PASSWDMISMATCH, "*", ":Password incorrect")
+            close
+            return
+          end
+        end
       when "NICK"
         if payload.params.size != 1
           # Invalid nickname format (e.g., contains spaces or missing param)
@@ -254,6 +287,10 @@ module Circed
         end
         Actions::Nick.call(self, payload.params.first)
       when "USER"
+        if payload.params.size < 4
+          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, "*", "USER", ":Not enough parameters")
+          return
+        end
         self.user = payload.params
       when "AWAY"
         Actions::Away.call(self, payload.params.join(" ")) unless payload.params.empty?

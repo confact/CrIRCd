@@ -39,7 +39,7 @@ describe "Basic Connectivity" do
     end
 
     responses.should_not be_empty
-    responses.any? { |response| response.includes?("001") }.should be_true
+    responses.any?(&.includes?("001")).should be_true
 
     socket.close
   end

@@ -46,12 +46,27 @@ module Circed
         client.send_message(Server.clean_name, Numerics::RPL_STARTTLS, client.nickname || "*", ":STARTTLS successful, proceed with TLS handshake")
 
         begin
+          # Set timeout for STARTTLS handshake
+          tcp_socket.read_timeout = 10.seconds
+          tcp_socket.write_timeout = 10.seconds
+
           ssl_context = Network::SSLSocket.create_context(ssl_config)
           ssl_socket = Network::SSLSocket.upgrade_to_ssl(tcp_socket, ssl_context)
           client.socket = ssl_socket
-          Log.info { "STARTTLS completed for #{client.nickname || client.host}" }
+
+          if peer_info = Network::SSLSocket.get_peer_info(ssl_socket)
+            Log.info { "STARTTLS completed for #{client.nickname || client.host} (#{peer_info})" }
+          else
+            Log.info { "STARTTLS completed for #{client.nickname || client.host}" }
+          end
+        rescue ex : OpenSSL::SSL::Error
+          Log.error { "STARTTLS failed for #{client.nickname || client.host}: #{ex.message}" }
+          client.close
+        rescue ex : IO::TimeoutError
+          Log.error { "STARTLS timed out for #{client.nickname || client.host}" }
+          client.close
         rescue ex
-          Log.error { "STARTTLS failed: #{ex.message}" }
+          Log.error { "STARTTLS failed for #{client.nickname || client.host}: #{ex.message}" }
           client.close
         end
       end
