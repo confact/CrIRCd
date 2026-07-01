@@ -76,4 +76,76 @@ describe Circed::Domain::Channel do
     channel.invite_list.should contain("Alice")
     channel.ban_list.should contain("Evil*")
   end
+
+  describe "ban matching" do
+    it "matches standard hostmask bans with case-insensitive wildcards" do
+      channel = Circed::Domain::Channel.new("#test")
+      channel.add_ban("*!*@host.example")
+
+      channel.banned?("Alice!alice@host.example").should be_true
+      channel.banned?("Alice!alice@HOST.EXAMPLE").should be_true
+      channel.banned?("Alice!alice@hostXexample").should be_false
+    end
+
+    it "matches extended bans against user fields" do
+      channel = Circed::Domain::Channel.new("#test")
+      context = Circed::Domain::BanMatchContext.new(
+        "TroubleNick",
+        "alice",
+        "host.example",
+        "Blocked Realname",
+        "TroubleNick!alice@host.example",
+        ["#lobby"]
+      )
+
+      channel.add_ban("$n:Trouble*")
+      channel.banned?(context).should be_true
+
+      channel.remove_ban("$n:Trouble*")
+      channel.add_ban("$u:ali?e")
+      channel.banned?(context).should be_true
+
+      channel.remove_ban("$u:ali?e")
+      channel.add_ban("$h:host.example")
+      channel.banned?(context).should be_true
+
+      channel.remove_ban("$h:host.example")
+      channel.add_ban("$r:*Realname")
+      channel.banned?(context).should be_true
+    end
+
+    it "matches extended bans against joined channels and hostmask plus realname" do
+      channel = Circed::Domain::Channel.new("#test")
+      context = Circed::Domain::BanMatchContext.new(
+        "Alice",
+        "alice",
+        "host.example",
+        "Blocked Realname",
+        "Alice!alice@host.example",
+        ["#holding", "#lobby"]
+      )
+
+      channel.add_ban("~j:#holding")
+      channel.banned?(context).should be_true
+
+      channel.remove_ban("~j:#holding")
+      channel.add_ban("$x:Alice!*@host.example#Blocked*")
+      channel.banned?(context).should be_true
+    end
+
+    it "ignores unsupported extended ban types" do
+      channel = Circed::Domain::Channel.new("#test")
+      context = Circed::Domain::BanMatchContext.new(
+        "Alice",
+        "alice",
+        "host.example",
+        "Blocked Realname",
+        "Alice!alice@host.example",
+        ["#lobby"]
+      )
+
+      channel.add_ban("$a:*")
+      channel.banned?(context).should be_false
+    end
+  end
 end

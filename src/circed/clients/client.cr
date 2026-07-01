@@ -206,6 +206,33 @@ module Circed
       channel_repository.find_user_channels(nickname)
     end
 
+    def ban_match_context : Domain::BanMatchContext?
+      return unless nick = nickname
+
+      if domain_user = Infrastructure::ServiceLocator.user_repository.get(nick)
+        return Domain::BanMatchContext.new(
+          domain_user.nickname,
+          domain_user.username,
+          domain_user.hostname,
+          domain_user.realname,
+          domain_user.hostmask,
+          channels.map(&.name)
+        )
+      end
+
+      return unless current_user = user
+      return unless current_hostmask = hostmask
+
+      Domain::BanMatchContext.new(
+        nick,
+        current_user.name,
+        get_hostname || @host || "localhost",
+        current_user.realname,
+        current_hostmask,
+        channels.map(&.name)
+      )
+    end
+
     def shutdown
       return if @shutdown
       @shutdown = true

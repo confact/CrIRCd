@@ -655,8 +655,8 @@ module Circed
         end
 
         # Ban checking
-        if hostmask = client.hostmask
-          if channel.banned?(hostmask)
+        if ban_context = client.ban_match_context
+          if channel.banned?(ban_context)
             Utils::IrcUtils.send_banned_from_channel_error(client, channel.name)
             return false
           end

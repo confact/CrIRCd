@@ -328,6 +328,34 @@ describe "Channel Operations Integration" do
       alice.quit
       bob.quit
     end
+
+    it "enforces extended ban matches" do
+      env.setup_single_server(ssl_enabled: false)
+
+      alice = env.create_client("Alice", port: 16667, ssl: false)
+      bob = env.create_client("Bob", port: 16667, ssl: false)
+
+      alice.register
+      bob.register("blocked", "Blocked Realname")
+
+      alice.join("#realban")
+      alice.send("MODE #realban +b $r:*Blocked*")
+      alice.should_receive(/MODE #realban.*\+b \$r:\*Blocked\*/)
+
+      bob.send("JOIN #realban")
+      bob.should_receive(/474.*#realban.*Cannot join channel \(\+b\)/)
+
+      bob.join("#holding")
+      alice.join("#joinban")
+      alice.send("MODE #joinban +b ~j:#holding")
+      alice.should_receive(/MODE #joinban.*\+b ~j:#holding/)
+
+      bob.send("JOIN #joinban")
+      bob.should_receive(/474.*#joinban.*Cannot join channel \(\+b\)/)
+
+      alice.quit
+      bob.quit
+    end
   end
 
   describe "cross-server channel operations" do

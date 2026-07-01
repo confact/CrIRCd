@@ -14,7 +14,8 @@ A Crystal IRC server implementation that follows IRC protocol specifications. Wh
   * Kick and invite users
   * Topic management
   * Channel modes (private, secret, password-protected, user limit)
-  * Ban lists
+  * Ban lists with extended matching for nick, username, hostname, realname,
+    joined channel, and hostmask plus realname masks
 * User information lookup (IP, hostname, WHOIS)
 * Activity and signon time tracking
 
@@ -29,7 +30,7 @@ A Crystal IRC server implementation that follows IRC protocol specifications. Wh
 
 ### Not Implemented
 * IRC operator authentication and oper-only commands
-* Network-wide GLines and extended ban lookups
+* Network-wide GLines
 * NickServ, ChanServ, and persistent IRC services
 
 
@@ -85,8 +86,8 @@ CrIRCd currently supports these client-facing commands:
 Server-to-server links support handshake, burst, channel membership, user state,
 message routing, and basic server query propagation.
 
-Unsupported areas include IRC operator authentication, network GLines, extended
-ban matching, and persistent IRC services.
+Unsupported areas include IRC operator authentication, network GLines, and
+persistent IRC services.
 
 ## Configuration Reload
 

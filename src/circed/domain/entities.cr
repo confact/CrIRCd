@@ -2,6 +2,14 @@
 
 module Circed
   module Domain
+    record BanMatchContext,
+      nickname : String,
+      username : String,
+      hostname : String,
+      realname : String,
+      hostmask : String,
+      channels : Array(String)
+
     # Domain model for IRC users
     class User
       property nickname : String
@@ -158,13 +166,84 @@ module Circed
       end
 
       def banned?(hostmask : String) : Bool
-        @ban_list.any? { |ban| matches_ban_mask?(hostmask, ban) }
+        @ban_list.any? { |ban| matches_standard_ban_mask?(hostmask, ban) }
       end
 
-      private def matches_ban_mask?(hostmask : String, ban_mask : String) : Bool
-        regex_pattern = ban_mask.gsub("*", ".*").gsub("?", ".")
-        regex_pattern = "^#{regex_pattern}$"
-        hostmask.matches?(Regex.new(regex_pattern, Regex::Options::IGNORE_CASE))
+      def banned?(context : BanMatchContext) : Bool
+        @ban_list.any? { |ban| matches_ban_mask?(context, ban) }
+      end
+
+      private def matches_ban_mask?(context : BanMatchContext, ban_mask : String) : Bool
+        if ban_mask.size >= 4 && (ban_mask[0] == '$' || ban_mask[0] == '~') && ban_mask[2] == ':'
+          matches_extended_ban_mask?(context, ban_mask[1], ban_mask[3..-1])
+        else
+          matches_standard_ban_mask?(context.hostmask, ban_mask)
+        end
+      end
+
+      private def matches_standard_ban_mask?(hostmask : String, ban_mask : String) : Bool
+        wildcard_match?(ban_mask, hostmask)
+      end
+
+      private def matches_extended_ban_mask?(context : BanMatchContext, ban_type : Char, pattern : String) : Bool
+        case ban_type.downcase
+        when 'n'
+          wildcard_match?(pattern, context.nickname)
+        when 'u'
+          wildcard_match?(pattern, context.username)
+        when 'h'
+          wildcard_match?(pattern, context.hostname)
+        when 'r'
+          wildcard_match?(pattern, context.realname)
+        when 'j'
+          context.channels.any? { |channel_name| wildcard_match?(pattern, channel_name) }
+        when 'x'
+          wildcard_match?(pattern, "#{context.hostmask}##{context.realname}")
+        else
+          false
+        end
+      end
+
+      private def wildcard_match?(pattern : String, value : String) : Bool
+        pattern_index = 0
+        value_index = 0
+        star_index = -1
+        backtrack_value_index = 0
+
+        while value_index < value.bytesize
+          if pattern_index < pattern.bytesize &&
+             wildcard_byte_matches?(pattern.byte_at(pattern_index), value.byte_at(value_index))
+            pattern_index += 1
+            value_index += 1
+          elsif pattern_index < pattern.bytesize && pattern.byte_at(pattern_index) == '*'.ord.to_u8
+            star_index = pattern_index
+            backtrack_value_index = value_index
+            pattern_index += 1
+          elsif star_index >= 0
+            pattern_index = star_index + 1
+            backtrack_value_index += 1
+            value_index = backtrack_value_index
+          else
+            return false
+          end
+        end
+
+        while pattern_index < pattern.bytesize && pattern.byte_at(pattern_index) == '*'.ord.to_u8
+          pattern_index += 1
+        end
+
+        pattern_index == pattern.bytesize
+      end
+
+      private def wildcard_byte_matches?(pattern_byte : UInt8, value_byte : UInt8) : Bool
+        pattern_byte == '?'.ord.to_u8 || ascii_downcase(pattern_byte) == ascii_downcase(value_byte)
+      end
+
+      private def ascii_downcase(byte : UInt8) : UInt8
+        value = byte.to_i
+        return (value + 32).to_u8 if value >= 65 && value <= 90
+
+        byte
       end
 
       # Invite management
