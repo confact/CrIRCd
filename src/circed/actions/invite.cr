@@ -6,7 +6,7 @@ module Circed
       return unless sender_nick = sender.nickname
 
       # Validate channel name format
-      unless channel_name.starts_with?("#") || channel_name.starts_with?("&")
+      unless Utils::IrcUtils.valid_channel_name?(channel_name)
         Utils::IrcUtils.send_channel_error(sender, channel_name)
         return
       end

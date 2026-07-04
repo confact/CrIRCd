@@ -3,7 +3,7 @@ module Circed
   module Infrastructure
     class Container
       # Use a union type to store service instances
-      alias ServiceInstance = Repositories::UserRepository | Repositories::ChannelRepository | Repositories::ServerRepository | Services::AuthenticationService | Services::NotificationService | Services::IRCService
+      alias ServiceInstance = Repositories::UserRepository | Repositories::ChannelRepository | Repositories::ServerRepository | Services::AuthenticationService | Services::NotificationService | Services::IRCService | Services::DNSResolverService
 
       @@instances = Hash(String, ServiceInstance).new
 
@@ -34,6 +34,7 @@ module Circed
 
         # Create services
         auth_service = Services::AuthenticationService.new(config)
+        dns_resolver_service = Services::DNSResolverService.new(config.dns)
         notification_service = Services::NotificationService.new(user_repo, channel_repo)
         irc_service = Services::IRCService.new(user_repo, channel_repo, notification_service)
 
@@ -42,6 +43,7 @@ module Circed
         register(Repositories::ChannelRepository, channel_repo)
         register(Repositories::ServerRepository, server_repo)
         register(Services::AuthenticationService, auth_service)
+        register(Services::DNSResolverService, dns_resolver_service)
         register(Services::NotificationService, notification_service)
         register(Services::IRCService, irc_service)
       end
@@ -71,6 +73,10 @@ module Circed
 
       def self.irc_service : Services::IRCService
         Container.resolve(Services::IRCService)
+      end
+
+      def self.dns_resolver_service : Services::DNSResolverService
+        Container.resolve(Services::DNSResolverService)
       end
     end
   end

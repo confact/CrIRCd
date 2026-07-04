@@ -4,8 +4,13 @@ require "../actions/starttls"
 
 module Circed
   class Client
+    OUTBOUND_QUEUE_CAPACITY = 1024
+    OUTBOUND_BATCH_MESSAGES =   64
+    OUTBOUND_BATCH_BYTES    = 64 * 1024
+
     property socket : Network::SSLSocket::IRCSocket? = nil
     getter host : String?
+    getter hostname : String
     getter nickname : String?
     getter hostmask : String?
     property last_activity : Time
@@ -15,13 +20,20 @@ module Circed
     property? registered : Bool = false
     property password : String?
 
-    @pingpong : Pingpong?
-
     @buffer : Array(String) = [] of String
     @shutdown : Bool = false
+    @outbound_messages : ::Channel(String)
+    @direct_writes : Bool
+    @socket_write_mutex : Mutex
+    @last_ping : Time?
+    @last_pong : Time?
+    @hostname_lookup : Channel(String?)?
 
     def initialize(@socket : Network::SSLSocket::IRCSocket?, buffer)
       @buffer = buffer
+      @outbound_messages = ::Channel(String).new(OUTBOUND_QUEUE_CAPACITY)
+      @direct_writes = ENV["CIRCED_TEST"]? == "true"
+      @socket_write_mutex = Mutex.new
       @host = if sock = @socket
                 case sock
                 when TCPSocket
@@ -30,9 +42,17 @@ module Circed
                   "ssl_client"
                 end
               end
+      @hostname = if sock = @socket
+                    Hostname.get_hostname(sock)
+                  else
+                    "localhost"
+                  end
+      @hostname_lookup = start_hostname_lookup(@hostname)
       set_hostmask
       @last_activity = Time.utc
       @signon_time = Time.utc
+      @last_pong = @signon_time
+      start_outbound_writer unless @direct_writes
     end
 
     def setup
@@ -53,31 +73,20 @@ module Circed
       end
 
       if current_socket = socket
-        while !current_socket.closed?
-          FastIRC.parse(current_socket) do |payload|
-            run_commands(payload)
-          end
-
-          if closed?
-            user_repository = Infrastructure::ServiceLocator.user_repository
-            user_repository.remove_client(nickname.to_s) unless nickname.to_s.empty?
-            break
-          end
+        FastIRC.parse(current_socket) do |payload|
+          run_commands(payload)
         end
+
+        cleanup_after_disconnect
       end
     rescue e : IO::Error
       Log.warn(exception: e) { "IO Error" }
-      shutdown
-      user_repository = Infrastructure::ServiceLocator.user_repository
-      user_repository.remove_client(nickname.to_s) unless nickname.to_s.empty?
+      cleanup_after_disconnect
     rescue e : Circed::ClosedClient
-      user_repository = Infrastructure::ServiceLocator.user_repository
-      user_repository.remove_client(nickname.to_s) unless nickname.to_s.empty?
+      remove_registered_client
     rescue e : Exception
       Log.error(exception: e) { "Error" }
-      shutdown
-      user_repository = Infrastructure::ServiceLocator.user_repository
-      user_repository.remove_client(nickname.to_s) unless nickname.to_s.empty?
+      cleanup_after_disconnect
     end
 
     def user=(users_messages : Array(String))
@@ -111,13 +120,13 @@ module Circed
       Log.info { message }
       return log_closed_socket_and_exit if closed?
 
-      write_to_socket(message + "\n")
+      enqueue_outbound(String.build { |io| io << message << '\n' })
     end
 
     def send_error(message)
       Log.info { "Sending ERROR to #{@nickname}: #{message}" }
       return if closed?
-      write_to_socket("ERROR :#{message}\n")
+      enqueue_outbound(String.build { |io| io << "ERROR :" << message << '\n' })
     end
 
     def notice(message)
@@ -131,57 +140,34 @@ module Circed
 
     def send_message(prefix, command, *params)
       return log_closed_socket_and_exit if closed?
-      message = "#{prefix} #{command} #{params.join(" ")}\n"
+      message = build_message_line(prefix, command, params)
+      Log.info { message }
+      enqueue_outbound(message)
+    end
+
+    def send_message_now(prefix, command, *params)
+      return log_closed_socket_and_exit if closed?
+      message = build_message_line(prefix, command, params)
       Log.info { message }
       write_to_socket(message)
-    end
-
-    def send_message_to_receiver(command, sender_nickname, sender_user, sender_host, params : Array(String))
-      if current_user = user
-        send_message_common(command, sender_nickname, sender_user, sender_host, [current_user.name] + params)
-      end
-    end
-
-    def send_message_to_server(command, sender_nickname, sender_user, sender_host, params : Array(String))
-      send_message_common(command, sender_nickname, sender_user, sender_host, params)
-    end
-
-    def send_message_common(command, sender_nickname, sender_user, sender_host, params : Array(String))
-      current_socket = socket
-      return unless current_socket
-
-      update_activity
-      prefix = FastIRC::Prefix.new(source: sender_nickname, user: sender_user, host: sender_host)
-      begin
-        FastIRC::Message.new(command, params, prefix: prefix).to_s(current_socket)
-        Log.debug { "sending message to #{sender_nickname}" }
-        log_closed_socket_and_exit if closed?
-        current_socket.flush
-      rescue ex : IO::Error | IO::TimeoutError
-        close_socket_after_write_error(ex)
-      end
     end
 
     def complete_registration
       return if registered?
       return unless nickname && user
 
+      apply_resolved_hostname
       self.registered = true
 
       # Send welcome messages
       Server.welcome_message(self)
-
-      # Send MOTD and LUSERS
-      Server.lusers(self)
-      Server.motd(self)
-
-      @pingpong = Pingpong.new(self)
 
       Log.info { "User #{nickname}!#{user} registered from #{host}" }
     end
 
     def close
       Log.info { "Closing connection" }
+      close_outbound_queue
       socket.try(&.close)
       raise ClosedClient.new("closed")
     end
@@ -191,14 +177,29 @@ module Circed
     end
 
     def pong(params : Array(String))
-      @pingpong.try(&.pong(params))
+      @last_pong = Time.utc
+      @last_ping = @last_pong
       Log.debug { "PONG #{@nickname}" }
-      # send_message("PING :#{@nickname} :localhost")
     end
 
     def ping(params : Array(String))
-      @pingpong.try(&.ping(params))
-      # return if @last_checked && @last_checked.not_nil! < 5.seconds.ago
+      send_message(create_pong_message(params))
+      @last_pong = Time.utc
+    end
+
+    def send_heartbeat_ping(now : Time = Time.utc) : Nil
+      return if closed?
+      return if (last_ping = @last_ping) && now - last_ping < 20.seconds
+
+      @last_ping = now
+      send_message(create_ping_message)
+    end
+
+    def heartbeat_timed_out?(now : Time = Time.utc) : Bool
+      return false unless last_ping = @last_ping
+      return false if (last_pong = @last_pong) && last_pong >= last_ping
+
+      now - last_ping > 1.minute
     end
 
     def channels
@@ -246,11 +247,9 @@ module Circed
         affected_channels.each do |channel_name|
           notification_service.notify_user_parted(nickname, channel_name)
         end
+        Infrastructure::ServiceLocator.user_repository.remove(nickname)
       end
-      if @pingpong
-        @pingpong.try(&.stop_ping)
-        @pingpong.try(&.stop_pong_check)
-      end
+      close_outbound_queue
       socket.try(&.close)
       Log.info { "#{@nickname} has disconnected" }
     end
@@ -305,40 +304,46 @@ module Circed
     private def handle_user_commands(payload : FastIRC::Message)
       case payload.command
       when "PASS"
-        if payload.params.empty?
-          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, "*", "PASS", ":Not enough parameters")
-          return
-        end
-        self.password = payload.params.first
-
-        # Check if password matches server password (if configured)
-        if server_password = Server.config.server_password
-          if password != server_password
-            send_message(Server.clean_name, Numerics::ERR_PASSWDMISMATCH, "*", ":Password incorrect")
-            close
-            return
-          end
-        end
+        handle_pass_command(payload)
       when "NICK"
-        if payload.params.size != 1
-          # Invalid nickname format (e.g., contains spaces or missing param)
-          send_message(Server.clean_name, Numerics::ERR_ERRONEUSNICKNAME, payload.params.first? || "*", ":Erroneous nickname")
-          return
-        end
-        Actions::Nick.call(self, payload.params.first)
+        handle_nick_command(payload)
       when "USER"
-        if payload.params.size < 4
-          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, "*", "USER", ":Not enough parameters")
-          return
-        end
-        self.user = payload.params
+        handle_user_command(payload)
       when "AWAY"
-        away_message = payload.params.empty? ? nil : payload.params.join(" ")
+        away_message = payload.params.empty? ? nil : joined_params(payload.params)
         Actions::Away.call(self, away_message)
       when "CAP"
         return if payload.params.empty?
         Actions::Cap.call(self, payload.params)
       end
+    end
+
+    private def handle_pass_command(payload : FastIRC::Message) : Nil
+      unless require_param_count(payload, 1, "PASS", "*")
+        return
+      end
+
+      self.password = payload.params.first
+      return unless server_password = Server.config.server_password
+      return if password == server_password
+
+      send_message(Server.clean_name, Numerics::ERR_PASSWDMISMATCH, "*", ":Password incorrect")
+      close
+    end
+
+    private def handle_nick_command(payload : FastIRC::Message) : Nil
+      if payload.params.size != 1
+        send_message(Server.clean_name, Numerics::ERR_ERRONEUSNICKNAME, payload.params.first? || "*", ":Erroneous nickname")
+        return
+      end
+
+      Actions::Nick.call(self, payload.params.first)
+    end
+
+    private def handle_user_command(payload : FastIRC::Message) : Nil
+      return unless require_param_count(payload, 4, "USER", "*")
+
+      self.user = payload.params
     end
 
     private def handle_connection_commands(payload : FastIRC::Message)
@@ -360,49 +365,65 @@ module Circed
       end
       case payload.command
       when "JOIN"
-        if payload.params.empty?
-          # Need more params
-          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "JOIN", ":Not enough parameters")
-          return
-        end
-        Actions::Join.call(self, payload.params.first)
+        handle_join_command(payload)
       when "PART"
-        if payload.params.empty?
-          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "PART", ":Not enough parameters")
-          return
-        end
-        channel_name = payload.params.first
-        reason = payload.params.size > 1 ? payload.params[1].lchop(':') : nil
-        Actions::Part.call(self, channel_name, reason)
+        handle_part_command(payload)
       when "MODE"
         Actions::Mode.call(self, payload.params)
       when "KICK"
-        if payload.params.size < 2
-          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "KICK", ":Not enough parameters")
-          return
-        end
-        Actions::Kick.call(self, payload.params)
+        handle_kick_command(payload)
       when "TOPIC"
-        if payload.params.empty?
-          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "TOPIC", ":Not enough parameters")
-          return
-        end
-        Actions::Topic.call(self, payload.params)
+        handle_topic_command(payload)
       when "INVITE"
-        if payload.params.size < 2
-          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "INVITE", ":Not enough parameters")
-          return
-        end
-        invited_user = payload.params.first
-        channel_name = payload.params[1]
-        Actions::Invite.call(self, invited_user, channel_name)
+        handle_invite_command(payload)
       end
+    end
+
+    private def handle_join_command(payload : FastIRC::Message) : Nil
+      return unless require_param_count(payload, 1, "JOIN")
+
+      Actions::Join.call(self, payload.params.first)
+    end
+
+    private def handle_part_command(payload : FastIRC::Message) : Nil
+      return unless require_param_count(payload, 1, "PART")
+
+      channel_name = payload.params.first
+      reason = payload.params.size > 1 ? payload.params[1].lchop(':') : nil
+      Actions::Part.call(self, channel_name, reason)
+    end
+
+    private def handle_kick_command(payload : FastIRC::Message) : Nil
+      return unless require_param_count(payload, 2, "KICK")
+
+      Actions::Kick.call(self, payload.params)
+    end
+
+    private def handle_topic_command(payload : FastIRC::Message) : Nil
+      return unless require_param_count(payload, 1, "TOPIC")
+
+      Actions::Topic.call(self, payload.params)
+    end
+
+    private def handle_invite_command(payload : FastIRC::Message) : Nil
+      return unless require_param_count(payload, 2, "INVITE")
+
+      invited_user = payload.params.first
+      channel_name = payload.params[1]
+      Actions::Invite.call(self, invited_user, channel_name)
+    end
+
+    private def require_param_count(payload : FastIRC::Message, minimum : Int32, command : String, target : String = nickname || "*") : Bool
+      return true if payload.params.size >= minimum
+
+      send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, target, command, ":Not enough parameters")
+      false
     end
 
     private def handle_message_commands(payload : FastIRC::Message)
       case payload.command
       when "QUIT"
-        Actions::Quit.call(self, payload.params.join(" ")) unless payload.params.empty?
+        Actions::Quit.call(self, joined_params(payload.params)) unless payload.params.empty?
         quit(payload.params)
       when "NOTICE"
         if payload.params.size < 2
@@ -410,7 +431,7 @@ module Circed
           return
         end
         target = payload.params.first
-        message = payload.params[1..-1].join(" ")
+        message = joined_params(payload.params, 1)
         Actions::Notice.call(self, target, message)
       when "PRIVMSG"
         if payload.params.size < 2
@@ -418,22 +439,180 @@ module Circed
           return
         end
         target = payload.params.first
-        message = payload.params[1..-1].join(" ")
+        message = joined_params(payload.params, 1)
         Actions::Privmsg.call(self, target, message)
       end
     end
 
+    private def joined_params(params : Array(String), start_index : Int32 = 0) : String
+      return "" if start_index >= params.size
+      return params[start_index] if start_index == params.size - 1
+
+      String.build do |io|
+        first = true
+        index = start_index
+        while index < params.size
+          if first
+            first = false
+          else
+            io << ' '
+          end
+          io << params[index]
+          index += 1
+        end
+      end
+    end
+
     private def get_hostname : String?
-      current_socket = socket
-      return "localhost" unless current_socket
-      Hostname.get_hostname(current_socket) || "localhost"
+      @hostname
+    end
+
+    private def start_hostname_lookup(ip_address : String) : Channel(String?)?
+      return nil unless Infrastructure::Container.registered?(Services::DNSResolverService)
+
+      Infrastructure::ServiceLocator.dns_resolver_service.resolve_async(ip_address)
+    end
+
+    private def remove_registered_client : Nil
+      return unless nick = nickname
+      return if nick.empty?
+
+      Infrastructure::ServiceLocator.user_repository.remove(nick)
+    end
+
+    private def cleanup_after_disconnect : Nil
+      return if @shutdown
+      @shutdown = true
+
+      if nick = nickname
+        channel_repository = Infrastructure::ServiceLocator.channel_repository
+        user_channels = channel_repository.find_user_channels(nick)
+        quit_message = String.build do |io|
+          io << ':' << (hostmask || nick) << " QUIT :Client disconnected"
+        end
+
+        Infrastructure::ServiceLocator.user_repository.remove(nick)
+        channel_repository.remove_user_from_all_channels(nick)
+        Infrastructure::ServiceLocator.notification_service.notify_quit_in_channels(nick, user_channels, quit_message)
+      end
+
+      close_outbound_queue
+      socket.try(&.close)
+      Log.info { "#{@nickname} has disconnected" }
+    end
+
+    private def apply_resolved_hostname : Nil
+      lookup = @hostname_lookup
+      return unless lookup
+
+      dns_resolver = Infrastructure::ServiceLocator.dns_resolver_service
+      return unless resolved_hostname = dns_resolver.receive_result(lookup)
+
+      @hostname = resolved_hostname
+      set_hostmask
+      update_domain_user_hostname(resolved_hostname)
+    ensure
+      @hostname_lookup = nil
+    end
+
+    private def update_domain_user_hostname(hostname : String) : Nil
+      return unless nick = nickname
+      return unless domain_user = Infrastructure::ServiceLocator.user_repository.get(nick)
+
+      domain_user.hostname = hostname
+      Infrastructure::ServiceLocator.user_repository.add(nick, domain_user)
+    end
+
+    private def start_outbound_writer : Nil
+      spawn do
+        outbound_writer_loop
+      end
+    end
+
+    private def outbound_writer_loop : Nil
+      while first_message = @outbound_messages.receive?
+        batch = build_outbound_batch(first_message)
+        break unless write_to_socket(batch)
+      end
+    ensure
+      close_outbound_queue
+    end
+
+    private def build_outbound_batch(first_message : String) : String
+      message_count = 1
+      byte_count = first_message.bytesize
+
+      String.build(capacity: first_message.bytesize) do |io|
+        io << first_message
+
+        loop do
+          break if message_count >= OUTBOUND_BATCH_MESSAGES || byte_count >= OUTBOUND_BATCH_BYTES
+
+          select
+          when next_message = @outbound_messages.receive?
+            break unless next_message
+            io << next_message
+            message_count += 1
+            byte_count += next_message.bytesize
+          else
+            break
+          end
+        end
+      end
+    end
+
+    private def enqueue_outbound(message : String) : Bool
+      return write_to_socket(message) if @direct_writes
+      return false if @outbound_messages.closed?
+
+      select
+      when @outbound_messages.send(message)
+        true
+      else
+        close_slow_client
+        false
+      end
+    rescue Channel::ClosedError
+      false
+    end
+
+    private def close_outbound_queue : Nil
+      @outbound_messages.close unless @outbound_messages.closed?
+    end
+
+    private def build_message_line(prefix, command, params) : String
+      String.build do |io|
+        io << prefix << ' ' << command
+        params.each do |param|
+          io << ' ' << param
+        end
+        io << '\n'
+      end
+    end
+
+    private def create_ping_message : String
+      String.build do |io|
+        io << "PING :" << (nickname || Server.name) << ' ' << Server.clean_name << '\n'
+      end
+    end
+
+    private def create_pong_message(params : Array(String)) : String
+      String.build do |io|
+        io << ':' << Server.name << " PONG"
+        params.each do |param|
+          io << ' ' << param
+        end
+        io << '\n'
+      end
     end
 
     private def write_to_socket(message : String) : Bool
       return false unless current_socket = socket
 
-      current_socket << message
-      current_socket.flush
+      @socket_write_mutex.synchronize do
+        current_socket << message
+        current_socket.flush
+      end
       true
     rescue ex : IO::Error | IO::TimeoutError
       close_socket_after_write_error(ex)
@@ -443,8 +622,17 @@ module Circed
     private def close_socket_after_write_error(exception : Exception) : Nil
       Log.debug(exception: exception) { "Closing client socket after write failure" }
       socket.try(&.close)
-    rescue close_exception : IO::Error
-      Log.debug(exception: close_exception) { "Failed to close client socket after write failure" }
+    rescue ex : IO::Error
+      Log.debug(exception: ex) { "Failed to close client socket after write failure" }
+    end
+
+    private def close_slow_client : Nil
+      return if @shutdown
+
+      Log.debug { "Closing #{@nickname || @host || "unknown"} because outbound queue is full" }
+      spawn cleanup_after_disconnect
+    rescue ex : IO::Error
+      Log.debug(exception: ex) { "Failed to close slow client socket" }
     end
 
     private def get_hostmask : String?

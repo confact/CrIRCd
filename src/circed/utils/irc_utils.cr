@@ -156,7 +156,7 @@ module Circed
       # Check if a user has a specific mode in a channel
       def self.user_has_channel_mode?(channel : Domain::Channel, nickname : String, mode : Char) : Bool
         user_modes = channel.members[nickname]?
-        user_modes && user_modes.includes?(mode)
+        user_modes.try(&.includes?(mode)) || false
       end
 
       # Check if user is operator in channel

@@ -5,6 +5,10 @@ module Circed
   class LinkServer
     include UnifiedMessaging
 
+    OUTBOUND_QUEUE_CAPACITY = 4096
+    OUTBOUND_BATCH_MESSAGES =  128
+    OUTBOUND_BATCH_BYTES    = 256 * 1024
+
     getter name : String
     getter target_host : String
     getter target_port : Int32
@@ -15,6 +19,9 @@ module Circed
 
     @buffer = [] of String
     @disconnected : Bool = false
+    @outbound_messages : ::Channel(String) = ::Channel(String).new(OUTBOUND_QUEUE_CAPACITY)
+    @direct_writes : Bool = ENV["CIRCED_TEST"]? == "true"
+    @socket_write_mutex : Mutex = Mutex.new
 
     def initialize(@name : String, @target_host : String, @target_port : Int32, password : String, use_ssl : Bool = false, verify_ssl : Bool = false)
       # Create TCP connection
@@ -61,6 +68,7 @@ module Circed
                   tcp_socket
                 end
 
+      start_outbound_writer unless @direct_writes
       handshake(password)
       setup([@name])
       listen
@@ -73,6 +81,7 @@ module Circed
       @target_port = remote_addr.port
       @name = "" # Will be set during authentication
 
+      start_outbound_writer unless @direct_writes
       authenticate_incoming_server
       listen
     end
@@ -497,7 +506,31 @@ module Circed
       socket.try(&.closed?) || false
     end
 
-    # Use UnifiedMessaging methods - these are now consolidated
+    def safe_send(message : String) : Bool
+      return false if closed?
+
+      line = String.build(capacity: message.bytesize + 2) do |io|
+        io << message << "\r\n"
+      end
+
+      return write_to_socket(line) if @direct_writes
+      return false if @outbound_messages.closed?
+
+      select
+      when @outbound_messages.send(line)
+        Performance::Metrics.increment_messages
+        true
+      else
+        close("Server link outbound queue full")
+        false
+      end
+    rescue Channel::ClosedError
+      false
+    end
+
+    def send_message(message : String)
+      safe_send(message)
+    end
 
     def close(reason : String = "Closing connection")
       Log.info { "Closing server connection to #{@name}: #{reason}" }
@@ -506,6 +539,7 @@ module Circed
       # Send SQUIT and handle network cleanup
       handle_disconnect(reason)
 
+      close_outbound_queue
       socket.try(&.close)
     end
 
@@ -537,6 +571,63 @@ module Circed
     private def cleanup_pingpong
       @pingpong.try(&.stop_ping)
       @pingpong.try(&.stop_pong_check)
+    end
+
+    private def start_outbound_writer : Nil
+      spawn do
+        outbound_writer_loop
+      end
+    end
+
+    private def outbound_writer_loop : Nil
+      while first_message = @outbound_messages.receive?
+        batch = build_outbound_batch(first_message)
+        break unless write_to_socket(batch)
+      end
+    ensure
+      close_outbound_queue
+    end
+
+    private def build_outbound_batch(first_message : String) : String
+      message_count = 1
+      byte_count = first_message.bytesize
+
+      String.build(capacity: first_message.bytesize) do |io|
+        io << first_message
+
+        loop do
+          break if message_count >= OUTBOUND_BATCH_MESSAGES || byte_count >= OUTBOUND_BATCH_BYTES
+
+          select
+          when next_message = @outbound_messages.receive?
+            break unless next_message
+            io << next_message
+            message_count += 1
+            byte_count += next_message.bytesize
+          else
+            break
+          end
+        end
+      end
+    end
+
+    private def write_to_socket(message : String) : Bool
+      return false unless socket_ref = socket
+
+      @socket_write_mutex.synchronize do
+        socket_ref.write(message.to_slice)
+        socket_ref.flush
+      end
+      true
+    rescue ex : IO::Error | IO::TimeoutError | OpenSSL::SSL::Error
+      Log.debug(exception: ex) { "Closing server link after write failure" }
+      handle_disconnect("Write failure")
+      socket.try(&.close)
+      false
+    end
+
+    private def close_outbound_queue : Nil
+      @outbound_messages.close unless @outbound_messages.closed?
     end
 
     def handle_message(message)

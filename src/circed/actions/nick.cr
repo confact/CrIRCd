@@ -32,11 +32,10 @@ module Circed
 
         # Create domain user if we have enough information
         if user_info = sender.user
-          hostname = sender.host || "localhost"
           domain_user = Domain::User.new(
             new_nickname,
             user_info.name,
-            hostname,
+            sender.hostname,
             user_info.realname,
             Server.name
           )

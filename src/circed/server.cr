@@ -17,6 +17,11 @@ module Circed
     @@ssl_server : TCPServer? = nil
     INITIAL_LINK_RETRY_DELAY = 1.second
     MAX_LINK_RETRY_DELAY     = 30.seconds
+    CLIENT_COMMANDS          = {
+      "NICK", "USER", "CAP", "JOIN", "PART", "MODE", "KICK",
+      "TOPIC", "INVITE", "LIST", "WHOIS", "WHO", "NAMES", "AWAY",
+      "STARTTLS", "QUIT", "NOTICE", "PRIVMSG",
+    }
 
     def self.start_time
       @@start_time
@@ -41,6 +46,7 @@ module Circed
 
       start_message
       bootup_servers # Connect to configured servers
+      start_client_heartbeat
       setup_signal_handlers(server)
 
       # Accept connections from both plain and SSL servers
@@ -66,6 +72,25 @@ module Circed
 
       Signal::TERM.trap { shutdown.call }
       Signal::INT.trap { shutdown.call }
+    end
+
+    private def self.start_client_heartbeat
+      spawn do
+        loop do
+          sleep 20.seconds
+          now = Time.utc
+          user_repository = Infrastructure::ServiceLocator.user_repository
+
+          user_repository.each_client do |client|
+            if client.heartbeat_timed_out?(now)
+              Log.debug { "PONG timed out for #{client.nickname} - closing socket" }
+              client.shutdown
+            else
+              client.send_heartbeat_ping(now)
+            end
+          end
+        end
+      end
     end
 
     private def self.accept_loop(server : TCPServer, is_ssl : Bool)
@@ -149,72 +174,117 @@ module Circed
     end
 
     private def self.determine_connection_type(connection : Network::SSLSocket::IRCSocket, buffer)
-      start_time = Time.utc
-      timeout = 10.seconds # 10 second timeout
-
-      # Read all available commands with a small delay to allow for multiple commands
-      loop do
-        # Check for timeout
-        if Time.utc - start_time > timeout
-          Log.warn { "Connection type determination timed out" }
-          return nil
-        end
-
-        # Try to read a command
-        message = connection.gets.try(&.strip)
-        break unless message
-
-        buffer << message
-        Log.debug { "Read command: #{message}" }
-
-        # Check if we have enough information to determine type
-        connection_type = detect_connection_type(buffer)
-        if connection_type
-          Log.debug { "Connection type determined: #{connection_type}" }
-          return connection_type
-        end
-
-        # If we don't have enough info yet, wait a bit for more commands
-        # This allows for commands that might be sent with small delays
-        sleep(0.1.seconds)
+      if connection.is_a?(TCPSocket)
+        connection.read_timeout = 10.seconds
       end
 
-      # If we've read any commands but couldn't determine type, assume client.
-      # Client command processing will handle registration checks and errors.
-      if !buffer.empty?
-        Log.debug { "Defaulting to client connection (no PASS/SERVER detected)" }
-        return :client
-      end
+      begin
+        loop do
+          line = connection.gets
+          break unless line
+          message = line.chomp
 
-      Log.warn { "Could not determine connection type, buffer: #{buffer}" }
-      nil
+          buffer << message
+          Log.debug { "Read command: #{message}" }
+
+          # Check if we have enough information to determine type
+          connection_type = detect_connection_type(buffer)
+          if connection_type
+            Log.debug { "Connection type determined: #{connection_type}" }
+            return connection_type
+          end
+        end
+
+        # If we've read any commands but couldn't determine type, assume client.
+        # Client command processing will handle registration checks and errors.
+        if !buffer.empty?
+          Log.debug { "Defaulting to client connection (no PASS/SERVER detected)" }
+          return :client
+        end
+
+        Log.warn { "Could not determine connection type, buffer: #{buffer}" }
+        nil
+      rescue IO::TimeoutError
+        Log.warn { "Connection type determination timed out" }
+        nil
+      ensure
+        if connection.is_a?(TCPSocket)
+          connection.read_timeout = nil
+        end
+      end
     end
 
     def self.detect_connection_type(buffer) : Symbol?
-      commands = extract_commands(buffer)
+      saw_pass = false
+      saw_server = false
+      saw_client_command = false
 
-      if commands.includes?("PASS") && commands.includes?("SERVER")
-        :server
-      elsif client_commands?(commands)
-        # Let client command processing handle registration checks and errors.
-        :client
-      else
-        nil
+      buffer.each do |line|
+        command_length = command_length(line)
+        saw_pass = true if command_equals?(line, command_length, "PASS")
+        saw_server = true if command_equals?(line, command_length, "SERVER")
+        saw_client_command = true if client_command?(line, command_length)
+      end
+
+      return :server if saw_pass && saw_server
+      return :client if saw_client_command
+
+      nil
+    end
+
+    private def self.client_command?(line : String, command_length : Int32) : Bool
+      CLIENT_COMMANDS.any? do |command|
+        command_equals?(line, command_length, command)
       end
     end
 
-    private def self.client_commands?(commands : Set(String)) : Bool
-      commands.any? do |command|
-        {
-          "NICK", "USER", "CAP", "JOIN", "PART", "MODE", "KICK",
-          "TOPIC", "INVITE", "LIST", "WHOIS", "WHO", "NAMES", "AWAY",
-          "STARTTLS", "QUIT", "NOTICE", "PRIVMSG",
-        }.includes?(command)
+    private def self.command_length(line : String) : Int32
+      line.index(' ') || line.bytesize
+    end
+
+    private def self.command_equals?(line : String, command_length : Int32, expected : String) : Bool
+      return false unless command_length == expected.bytesize
+
+      index = 0
+      while index < command_length
+        return false unless ascii_upcase(line.byte_at(index)) == expected.byte_at(index)
+
+        index += 1
+      end
+
+      true
+    end
+
+    private def self.ascii_upcase(byte : UInt8) : UInt8
+      value = byte.to_i
+      if value >= 97 && value <= 122
+        (value - 32).to_u8
+      else
+        byte
+      end
+    end
+
+    private def self.client_command?(command : String) : Bool
+      case command
+      when "NICK", "USER", "CAP", "JOIN", "PART", "MODE", "KICK",
+           "TOPIC", "INVITE", "LIST", "WHOIS", "WHO", "NAMES", "AWAY",
+           "STARTTLS", "QUIT", "NOTICE", "PRIVMSG"
+        true
+      else
+        false
       end
     end
 
     def self.extract_commands(buffer) : Set(String)
-      buffer.map(&.split(' ', 2).first.upcase).to_set
+      buffer.map { |line| extract_command(line) }.to_set
+    end
+
+    private def self.extract_command(line : String) : String
+      if index = line.index(' ')
+        line[0, index].upcase
+      else
+        line.upcase
+      end
     end
 
     def self.handle_user_connection(client : Network::SSLSocket::IRCSocket, buffer)
@@ -288,7 +358,7 @@ module Circed
 
     private def self.configured_link_connected?(linked_server : LinkedServer) : Bool
       servers = ServerHandler.servers
-      return servers.any? if config.linked_servers.size == 1
+      return !servers.empty? if config.linked_servers.size == 1
 
       servers.any? do |server|
         server.target_host == linked_server.host && server.target_port == linked_server.port ||

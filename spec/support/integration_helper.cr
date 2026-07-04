@@ -294,7 +294,7 @@ module IntegrationHelper
     end
 
     private def consume_from_buffer(pattern : Regex) : String?
-      index = @responses.index { |response| response.matches?(pattern) }
+      index = @responses.index(&.matches?(pattern))
       index ? @responses.delete_at(index) : nil
     end
 

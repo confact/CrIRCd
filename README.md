@@ -81,33 +81,53 @@ process file-descriptor limit with room for listening sockets, linked servers,
 logs, and outbound files.
 
 Reference benchmark on an Apple M1 Pro with 16 GB RAM, Crystal 1.17.1, release
-build, `LOG_LEVEL=ERROR`, and `ulimit -n 4096`:
+build, `LOG_LEVEL=ERROR`, and `ulimit -n 8192`. The local load generator runs
+concurrent client fibers against the server and sends `QUIT` before closing each
+test socket:
 
-* 500 local clients registered and joined channels in 0.11 seconds
-  (~4,500 clients/s).
-* 2,000 local clients registered and joined channels in 0.48 seconds
-  (~4,100 clients/s).
-* 3,500 local clients registered and joined channels in 1.15 seconds
-  (~3,000 clients/s).
+* 3,500 local clients registered and joined channels in 0.46-0.57 seconds with
+  128 client workers (~6,200-7,700 clients/s across two consecutive runs).
+* The same 3,500-client run measured ~5,500 clients/s with 64 workers and
+  ~5,100 clients/s with 256 workers on this host.
+* 5,000 local clients registered and joined 250 channels in 0.70 seconds with
+  128 client workers (~7,100 clients/s).
 
-The largest local socket benchmark run completed with 3,500 concurrent connected
-clients spread across 175 channels. This is a measured local baseline, not a hard
-limit; larger deployments should raise file-descriptor limits and benchmark on
-the target host.
+The largest local socket benchmark run completed with 5,000 concurrent connected
+clients spread across 250 channels. This is the current benchmark config limit,
+not a hard architectural limit. Larger deployments should raise `max_users`,
+raise file-descriptor limits, and benchmark on the target host. As a rule of
+thumb, a single process needs at least one file descriptor per local client plus
+headroom for listeners, server links, logs, and outbound files.
 
 The in-memory channel index benchmark uses 20,000 users, 5,000 channels, and
 100,000 user-channel memberships:
 
-* Indexed user-channel lookups: 100,000 queries in 8.48 ms
-  (~11.8 million lookups/s).
-* Old scan-style lookup over all channels: 100,000 queries in 12.7 seconds
-  (~7,900 lookups/s).
-* Removing 20,000 users from all joined channels: 11.92 ms.
+* Indexed user-channel lookups: 100,000 queries in 6.83 ms
+  (~14.7 million lookups/s).
+* Old scan-style lookup over all channels: 100,000 queries in 10.19 seconds
+  (~9,800 lookups/s).
+* Removing 20,000 users from all joined channels: 15.09 ms.
 
 That supports IRC networks with tens of thousands of users and thousands of
-channels for membership-heavy operations. Server-to-server networks should be
-kept to tens of directly linked servers until route-table caching and burst
-benchmarks are added; message propagation still fans out to linked servers.
+channels for membership-heavy operations on one process, assuming channel sizes
+and message rates are reasonable. Server-to-server networks should be kept to
+tens of directly linked servers until route-table caching and burst benchmarks
+are added; message propagation still fans out to linked servers. For large
+public networks, split users across linked servers and keep very large channels
+rare, because every channel message is still delivered to each recipient.
+
+CrIRCd uses bounded Crystal channels for per-client and server-link outbound
+queues, with writer fibers batching socket writes. Channel fanout remains a
+direct membership iteration instead of one pipe per IRC channel: Crystal
+channels are best used to communicate between fibers, while channel message
+delivery still has to visit each recipient. Extra per-channel pipes would add
+scheduling and backpressure overhead without reducing the O(channel members)
+delivery cost.
+
+To target 7,000-10,000 registrations per second, run release builds with low log
+volume, keep DNS asynchronous with a small registration wait, raise file
+descriptor limits, keep slow clients from blocking fanout with bounded outbound
+queues, and benchmark with realistic channel sizes and TLS settings.
 
 Run the benchmarks with:
 
@@ -115,15 +135,15 @@ Run the benchmarks with:
 crystal run --release benchmarks/channel_repository_benchmark.cr
 
 crystal build --release -o bin/circed src/circed.cr
-ulimit -n 4096
+ulimit -n 8192
 LOG_LEVEL=ERROR bin/circed benchmarks/benchmark_config.yml
 ```
 
 Then, from another shell with the same descriptor limit:
 
 ```bash
-ulimit -n 4096
-crystal run --release benchmarks/local_client_load.cr -- 127.0.0.1 16680 3500 175 2
+ulimit -n 8192
+crystal run --release benchmarks/local_client_load.cr -- 127.0.0.1 16680 3500 175 2 128
 ```
 
 ## Supported IRC Surface
@@ -149,6 +169,30 @@ The server watches the config file and reloads scalar configuration into memory,
 but runtime sockets are not reconciled after reload. Restart the process after
 changing bind host, ports, SSL certificates, linked servers, or limits that need
 to affect already-running listeners and links.
+
+## DNS Hostnames
+
+Client hostnames are resolved asynchronously. New clients start with their IP
+address immediately, then CrIRCd queues a reverse DNS lookup. Before sending the
+registration welcome, the client waits up to `dns.registration_wait_ms` for a
+verified hostname. If DNS is slow, unavailable, or the PTR result does not
+forward-confirm back to the client IP, the IP address remains the hostname.
+
+```yaml
+dns:
+  enabled: true
+  server: "8.8.8.8"
+  port: 53
+  workers: 4
+  queue_size: 1024
+  timeout_seconds: 1
+  registration_wait_ms: 100
+  cache_ttl_seconds: 3600
+  negative_cache_ttl_seconds: 300
+```
+
+Keep `registration_wait_ms` small on high-throughput servers. Increase
+`workers` only if DNS latency is high and the queue backs up.
 
 ## SSL/TLS Configuration
 

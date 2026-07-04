@@ -43,32 +43,39 @@ module Circed
         ssl_config = Server.config.ssl
         return unless ssl_config
 
-        client.send_message(Server.clean_name, Numerics::RPL_STARTTLS, client.nickname || "*", ":STARTTLS successful, proceed with TLS handshake")
+        client.send_message_now(Server.clean_name, Numerics::RPL_STARTTLS, client.nickname || "*", ":STARTTLS successful, proceed with TLS handshake")
 
         begin
-          # Set timeout for STARTTLS handshake
-          tcp_socket.read_timeout = 10.seconds
-          tcp_socket.write_timeout = 10.seconds
-
-          ssl_context = Network::SSLSocket.create_context(ssl_config)
-          ssl_socket = Network::SSLSocket.upgrade_to_ssl(tcp_socket, ssl_context)
+          ssl_socket = perform_tls_handshake(tcp_socket, ssl_config)
           client.socket = ssl_socket
-
-          if peer_info = Network::SSLSocket.get_peer_info(ssl_socket)
-            Log.info { "STARTTLS completed for #{client.nickname || client.host} (#{peer_info})" }
-          else
-            Log.info { "STARTTLS completed for #{client.nickname || client.host}" }
-          end
+          log_success(client, ssl_socket)
         rescue ex : OpenSSL::SSL::Error
-          Log.error { "STARTTLS failed for #{client.nickname || client.host}: #{ex.message}" }
-          client.close
+          close_after_failure(client, "STARTTLS failed", ex.message)
         rescue ex : IO::TimeoutError
-          Log.error { "STARTLS timed out for #{client.nickname || client.host}" }
-          client.close
+          close_after_failure(client, "STARTTLS timed out")
         rescue ex
-          Log.error { "STARTTLS failed for #{client.nickname || client.host}: #{ex.message}" }
-          client.close
+          close_after_failure(client, "STARTTLS failed", ex.message)
         end
+      end
+
+      private def self.perform_tls_handshake(tcp_socket : TCPSocket, ssl_config : Config::SSLConfig)
+        tcp_socket.read_timeout = 10.seconds
+        tcp_socket.write_timeout = 10.seconds
+
+        ssl_context = Network::SSLSocket.create_context(ssl_config)
+        Network::SSLSocket.upgrade_to_ssl(tcp_socket, ssl_context)
+      end
+
+      private def self.log_success(client : Client, ssl_socket)
+        peer_info = Network::SSLSocket.get_peer_info(ssl_socket)
+        suffix = peer_info ? " (#{peer_info})" : ""
+        Log.info { "STARTTLS completed for #{client.nickname || client.host}#{suffix}" }
+      end
+
+      private def self.close_after_failure(client : Client, message : String, detail : String? = nil)
+        suffix = detail ? ": #{detail}" : ""
+        Log.error { "#{message} for #{client.nickname || client.host}#{suffix}" }
+        client.close
       end
     end
   end

@@ -64,13 +64,13 @@ module Circed
       def create_channel(name : String) : Domain::Channel
         normalized_name = normalize_channel_name(name)
 
-        if existing = get(normalized_name)
-          existing
-        else
-          channel = Domain::Channel.new(normalized_name)
-          add(normalized_name, channel)
-          channel
+        if existing = @@channels[normalized_name]?
+          return existing
         end
+
+        channel = Domain::Channel.new(normalized_name)
+        add(normalized_name, channel)
+        channel
       end
 
       def add_member(channel_name : String, nickname : String, modes : Set(Char) = Set(Char).new) : Bool
@@ -127,21 +127,10 @@ module Circed
       end
 
       def set_user_mode(channel_name : String, nickname : String, mode : Char, add : Bool) : Bool
-        if channel = get(channel_name)
-          if channel.has_member?(nickname)
-            user_modes = channel.members[nickname]
-            if add
-              user_modes << mode
-            else
-              user_modes.delete(mode)
-            end
-            true
-          else
-            false
-          end
-        else
-          false
-        end
+        return false unless user_modes = get_user_modes_in_channel(channel_name, nickname)
+
+        add ? user_modes << mode : user_modes.delete(mode)
+        true
       end
 
       # Query methods
@@ -169,11 +158,7 @@ module Circed
       end
 
       def get_channel_users(channel_name : String) : Array(String)
-        if channel = get(channel_name)
-          channel.members.keys
-        else
-          Array(String).new
-        end
+        get(channel_name).try(&.members.keys) || Array(String).new
       end
 
       def user_in_channel?(channel_name : String, nickname : String) : Bool
@@ -181,11 +166,7 @@ module Circed
       end
 
       def get_user_modes_in_channel(channel_name : String, nickname : String) : Set(Char)?
-        if channel = get(channel_name)
-          channel.members[nickname]?
-        else
-          nil
-        end
+        get(channel_name).try(&.members[nickname]?)
       end
 
       def user_operator?(channel_name : String, nickname : String) : Bool

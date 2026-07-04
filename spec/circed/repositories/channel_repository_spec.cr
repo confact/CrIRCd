@@ -17,7 +17,7 @@ describe Circed::Repositories::ChannelRepository do
     repository.add_member("#two", "Bob")
 
     repository.find_user_channel_names("Alice").sort.should eq(["#one", "#two"])
-    repository.find_user_channels("Alice").map(&.name).sort.should eq(["#one", "#two"])
+    repository.find_user_channels("Alice").map(&.name).sort!.should eq(["#one", "#two"])
     repository.find_user_channel_names("Bob").should eq(["#two"])
   end
 

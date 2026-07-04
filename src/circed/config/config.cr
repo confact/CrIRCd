@@ -1,3 +1,4 @@
+require "./dns_config"
 require "./ssl_config"
 
 module Circed
@@ -14,6 +15,7 @@ module Circed
     getter network : String
     getter linked_servers : Array(LinkedServer) = [] of LinkedServer
     getter ssl : SSLConfig?
+    getter dns : DNSConfig = DNSConfig.new
 
     def validate_ssl!
       if ssl_config = ssl
