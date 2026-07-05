@@ -41,7 +41,7 @@ module Circed
     end
 
     private def self.split_list_param(param : String) : Array(String)
-      param.split(',').reject(&.empty?)
+      param.split(',', remove_empty: true)
     end
 
     private def self.can_see_channel?(sender : Client, channel : Domain::Channel) : Bool

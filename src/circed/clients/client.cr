@@ -475,7 +475,7 @@ module Circed
     private def split_list_param(param : String?) : Array(String)
       return [] of String unless param
 
-      param.split(',').reject(&.empty?)
+      param.split(',', remove_empty: true)
     end
 
     private def get_hostname : String?

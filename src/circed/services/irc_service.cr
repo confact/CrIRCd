@@ -58,12 +58,14 @@ module Circed
         # Sync with network state
         sync_join_with_network(nickname, channel_name)
 
+        hostmask = client.hostmask || ""
+
         # Send JOIN confirmation to the user (first message)
-        client.send_message(":#{client.hostmask} JOIN #{channel_name}")
+        client.send_message(":#{hostmask} JOIN #{channel_name}")
 
         # Send MODE message if user became operator (second message)
         if is_operator
-          client.send_message(":#{client.hostmask} MODE #{channel_name} +o #{nickname}")
+          client.send_message(":#{hostmask} MODE #{channel_name} +o #{nickname}")
         end
 
         # Send topic if channel has one
@@ -78,10 +80,10 @@ module Circed
         send_names_list(client, channel)
 
         # Send notifications to other users
-        @notification_service.notify_user_joined(nickname, channel_name)
+        @notification_service.notify_user_joined(hostmask, channel, nickname)
 
         # Propagate to network
-        propagate_to_network(":#{client.hostmask} JOIN #{channel_name}")
+        propagate_to_network(":#{hostmask} JOIN #{channel_name}")
 
         true
       end

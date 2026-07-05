@@ -96,7 +96,7 @@ module Circed
 
         disconnected = [] of String
 
-        @@servers.keys.each do |server_name|
+        @@servers.each_key do |server_name|
           next if server_name == from || server_name == split_server
 
           unless can_reach_without(server_name, split_server, from, Set(String).new)

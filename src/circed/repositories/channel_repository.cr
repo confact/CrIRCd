@@ -153,7 +153,7 @@ module Circed
 
       def find_channels_with_local_users(user_repository : UserRepository) : Array(Domain::Channel)
         @@channels.values.select do |channel|
-          channel.members.keys.any? { |nick| user_repository.has_client?(nick) }
+          channel.members.each_key.any? { |nick| user_repository.has_client?(nick) }
         end
       end
 

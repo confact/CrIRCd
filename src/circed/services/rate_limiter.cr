@@ -3,9 +3,11 @@ module Circed
     # Rate limiter for IRC commands to prevent flooding
     class RateLimiter
       # Per-client rate limiting configuration
-      DEFAULT_MAX_COMMANDS = 10
-      DEFAULT_TIME_WINDOW  = 60 # seconds
-      DEFAULT_BURST_SIZE   =  5
+      DEFAULT_MAX_COMMANDS  = 10
+      DEFAULT_TIME_WINDOW   = 60 # seconds
+      DEFAULT_BURST_SIZE    =  5
+      REGISTRATION_COMMANDS = {"NICK", "USER", "PASS", "SERVER"}
+      UNLIMITED_COMMANDS    = {"PING", "PONG", "ERROR", "QUIT"}
 
       # Different rate limits for different command types
       COMMAND_LIMITS = {
@@ -146,12 +148,12 @@ module Circed
 
       # Special handling for burst commands during registration
       def self.registration_command?(command : String) : Bool
-        ["NICK", "USER", "PASS", "SERVER"].includes?(command)
+        REGISTRATION_COMMANDS.includes?(command)
       end
 
       def self.should_rate_limit?(command : String) : Bool
         # Don't rate limit certain system commands
-        !["PING", "PONG", "ERROR", "QUIT"].includes?(command)
+        !UNLIMITED_COMMANDS.includes?(command)
       end
     end
   end

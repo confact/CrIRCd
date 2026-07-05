@@ -22,6 +22,11 @@ module Circed
         end
       end
 
+      def notify_user_joined(hostmask : String, channel : Domain::Channel, exclude_nickname : String)
+        message = ":#{hostmask} JOIN #{channel.name}"
+        send_to_channel_members(channel, message, exclude_nickname)
+      end
+
       def notify_user_parted(nickname : String, channel_name : String, reason : String? = nil)
         if user = @user_repository.get(nickname)
           message = String.build do |io|
@@ -199,12 +204,16 @@ module Circed
 
       private def send_to_channel_members(channel_name : String, message : String, exclude_nickname : String? = nil)
         if channel = @channel_repository.get(channel_name)
-          channel.members.each_key do |nickname|
-            next if exclude_nickname && nickname == exclude_nickname
+          send_to_channel_members(channel, message, exclude_nickname)
+        end
+      end
 
-            if client = @user_repository.get_client(nickname)
-              client.send_message(message)
-            end
+      private def send_to_channel_members(channel : Domain::Channel, message : String, exclude_nickname : String? = nil)
+        channel.members.each_key do |nickname|
+          next if exclude_nickname && nickname == exclude_nickname
+
+          if client = @user_repository.get_client(nickname)
+            client.send_message(message)
           end
         end
       end
