@@ -33,7 +33,7 @@ module Circed
       def self.validate_channel_name(name : String?) : Bool
         return false unless name
         return false if name.empty?
-        return false unless name.starts_with?('#') || name.starts_with?('&')
+        return false unless "#&+!".includes?(name[0])
         return false if name.size > MAX_CHANNEL_NAME_LENGTH
         return false if name.includes?(' ') || name.includes?('\0') || name.includes?('\r') || name.includes?('\n')
         return false if name.includes?(',') || name.includes?('\a') # comma is list separator, bell is control-G

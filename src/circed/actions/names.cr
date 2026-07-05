@@ -9,28 +9,39 @@ module Circed
         # List all channels user is in
         if nickname = sender.nickname
           user_channels = channel_repo.find_user_channels(nickname)
+          send_end_of_names(sender, "*") if user_channels.empty?
           user_channels.each do |channel|
             send_names_reply(sender, channel)
+            send_end_of_names(sender, channel.name)
           end
         end
       else
-        # List specific channel
-        if channel = channel_repo.get(channel_name)
-          # Check if user can see this channel
-          if can_see_channel?(sender, channel)
-            send_names_reply(sender, channel)
-          else
-            # Send empty reply for channels user cannot see
-            send_empty_names_reply(sender, channel_name)
-          end
+        split_list_param(channel_name).each do |name|
+          send_names_for_channel(sender, channel_repo, name)
+        end
+      end
+    end
+
+    private def self.send_names_for_channel(sender : Client, channel_repo : Repositories::ChannelRepository, channel_name : String)
+      if channel = channel_repo.get(channel_name)
+        # Check if user can see this channel
+        if can_see_channel?(sender, channel)
+          send_names_reply(sender, channel)
         else
-          # Channel doesn't exist - send empty reply
+          # Send empty reply for channels user cannot see
           send_empty_names_reply(sender, channel_name)
         end
+      else
+        # Channel doesn't exist - send empty reply
+        send_empty_names_reply(sender, channel_name)
       end
 
       # Always end with RPL_ENDOFNAMES
-      send_end_of_names(sender, channel_name || "*")
+      send_end_of_names(sender, channel_name)
+    end
+
+    private def self.split_list_param(param : String) : Array(String)
+      param.split(',').reject(&.empty?)
     end
 
     private def self.can_see_channel?(sender : Client, channel : Domain::Channel) : Bool
@@ -49,24 +60,26 @@ module Circed
     end
 
     private def self.send_names_reply(sender : Client, channel : Domain::Channel)
-      # Build the names list with proper prefixes
-      names = [] of String
+      names_string = String.build do |io|
+        first = true
+        channel.members.each do |nickname, modes|
+          if first
+            first = false
+          else
+            io << ' '
+          end
 
-      channel.members.each do |nickname, modes|
-        prefix = ""
+          if modes.includes?('o')
+            io << '@'
+          elsif modes.includes?('h')
+            io << '%'
+          elsif modes.includes?('v')
+            io << '+'
+          end
 
-        # Add channel operator prefix
-        if modes.includes?("o")
-          prefix = "@"
-        elsif modes.includes?("v")
-          prefix = "+"
+          io << nickname
         end
-
-        names << "#{prefix}#{nickname}"
       end
-
-      # RFC 1459 says names should be separated by spaces
-      names_string = names.join(" ")
 
       # Determine channel type symbol
       channel_type = channel.secret? ? "@" : "="

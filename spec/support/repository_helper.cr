@@ -14,6 +14,7 @@ module RepositoryHelper
   def clear_repositories
     channel_repository.clear
     user_repository.clear
+    Circed::Network::NetworkState.clear_all_state
   end
 
   # Helper methods for common test operations

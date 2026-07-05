@@ -13,8 +13,8 @@ module Circed
         NOT_REGISTERED         = "You have not registered"
         NICKNAME_IN_USE        = "Nickname is already in use"
         CANNOT_SEND_TO_CHANNEL = "Cannot send to channel"
-        INVITE_ONLY_CHANNEL    = "Channel is invite only"
-        BANNED_FROM_CHANNEL    = "You are banned from this channel"
+        INVITE_ONLY_CHANNEL    = "Cannot join channel (+i)"
+        BANNED_FROM_CHANNEL    = "Cannot join channel (+b)"
         CHANNEL_HAS_PASSWORD   = "Channel has a password"
         CHANNEL_IS_FULL        = "Channel is full"
         UNKNOWN_COMMAND        = "Unknown command"
@@ -25,7 +25,11 @@ module Circed
       # Channel validation utilities
       def self.valid_channel_name?(channel_name : String) : Bool
         return false if channel_name.empty?
-        channel_name.starts_with?('#') || channel_name.starts_with?('&')
+        return false unless "#&+!".includes?(channel_name[0])
+        return false if channel_name.includes?(' ') || channel_name.includes?(',') || channel_name.includes?('\a')
+        return false if channel_name.includes?('\0') || channel_name.includes?('\r') || channel_name.includes?('\n')
+
+        true
       end
 
       # Validate channel name and send error if invalid
@@ -156,7 +160,7 @@ module Circed
       # Check if a user has a specific mode in a channel
       def self.user_has_channel_mode?(channel : Domain::Channel, nickname : String, mode : Char) : Bool
         user_modes = channel.members[nickname]?
-        user_modes && user_modes.includes?(mode)
+        user_modes.try(&.includes?(mode)) || false
       end
 
       # Check if user is operator in channel

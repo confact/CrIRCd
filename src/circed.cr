@@ -25,4 +25,7 @@ end
 
 Log.setup_from_env
 
-Circed::Server.start unless ENV["CIRCED_TEST"]?
+# Start server if this is the main file being run
+if File.basename(PROGRAM_NAME) == "circed" || File.basename(PROGRAM_NAME) == "circed_test"
+  Circed::Server.start
+end

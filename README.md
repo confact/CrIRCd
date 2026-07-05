@@ -1,55 +1,291 @@
-# CrIRCd - IRCD (deamon) in Crystal
+# CrIRCd - IRCD (daemon) in Crystal
 
-This is an crystal IRC server made to follow the spec over time. Right now it is not 100% supporting the spec and is not recommended for production.
+A Crystal IRC server implementation that follows IRC protocol specifications. While not yet 100% spec-compliant, it provides a solid foundation for IRC server functionality.
 
-## What you can do now:
-* let user connect
-* Send MOTD and stats to the user
-* PING/PONG with disconnection after 3 unanswered PINGS.
-* send Peer to peer message between users.
-* channels
-* send messages in channels
-* Kick user from channel
-* invite user to channel
-* set topic in channel
-* make channel private
-* set password on channel
-* set limit on channel
-* set channel as secret
-* able to list channels
-* ban user from channel
-* able to lookup ip and hostname of user
-* whois user
-* logging last active time of user
-* logging signon time of user
+## Features
 
-## Plan to have:
-* chan modes
-* User modes
-* GLines support
-* lookup for bans
-* Server OPs
-* SSL TLS support
-* NickServ
-* ChanServ
-* Server-to-server communication
+### Core IRC Functionality
+* User connections and authentication
+* MOTD and server statistics
+* PING/PONG with automatic disconnection after 3 missed pings
+* Private messages between users
+* Channel support with standard operations:
+  * Join, part, and messaging
+  * Kick and invite users
+  * Topic management
+  * Channel modes (private, secret, password-protected, user limit)
+  * Ban lists with extended matching for nick, username, hostname, realname,
+    joined channel, and hostmask plus realname masks
+* User information lookup (IP, hostname, WHOIS)
+* Activity and signon time tracking
+
+### Network & Security
+* **SSL/TLS Support** - Secure connections for clients and servers
+* **Server-to-Server Communication** - Build IRC networks with multiple linked servers
+* **Server Link Recovery** - Configured outgoing links retry with capped backoff
+* **STARTTLS** - Upgrade plain connections to encrypted
+
+### Planned Features
+* Additional channel and user modes
+
+### Not Implemented
+* IRC operator authentication and oper-only commands
+* Network-wide GLines
+* NickServ, ChanServ, and persistent IRC services
 
 
-## How to run
-Would need crystal >= 1.4 to build this server.
+## Quick Start
 
-1. clone this repo
-2. build the program with: `crystal build --release ./src/circed.cr`
-3. run the program with `./circed` 
+### Requirements
+* Crystal >= 1.4
 
-### Config
-The config is in `config.yml` and is pretty self explanatory. You can change the port, hostname, stats and other things.
+### Installation
+1. Clone this repository
+2. Build the server: `crystal build --release ./src/circed.cr`
+3. Run the server: `./circed`
+
+### Basic Configuration
+The configuration is in `config.yml`. Basic settings include:
+
+```yaml
+host: "0.0.0.0"
+port: 6667
+network: "MyIRCNetwork"
+max_users: 100
+link_password: "server_link_password"
+```
+
+## Testing
+
+Use the focused test helper during development:
+
+```bash
+# Fast unit-level specs
+scripts/test fast
+
+# Real server integration specs
+scripts/test integration
+
+# Both suites
+scripts/test all
+```
+
+The integration specs bind fixed local ports and should be run sequentially.
+
+## Benchmarks and Capacity
+
+CrIRCd uses `max_users` as the configured local-client limit. Real concurrency is
+also bounded by the operating system file-descriptor limit, memory, TLS overhead,
+channel fanout size, and server-to-server links. Set `max_users` below the
+process file-descriptor limit with room for listening sockets, linked servers,
+logs, and outbound files.
+
+Reference benchmark on an Apple M1 Pro with 16 GB RAM, Crystal 1.17.1, release
+build, `LOG_LEVEL=ERROR`, and `ulimit -n 8192`. The local load generator runs
+concurrent client fibers against the server and sends `QUIT` before closing each
+test socket:
+
+* 3,500 local clients registered and joined channels in 0.46-0.57 seconds with
+  128 client workers (~6,200-7,700 clients/s across two consecutive runs).
+* The same 3,500-client run measured ~5,500 clients/s with 64 workers and
+  ~5,100 clients/s with 256 workers on this host.
+* 5,000 local clients registered and joined 250 channels in 0.70 seconds with
+  128 client workers (~7,100 clients/s).
+
+The largest local socket benchmark run completed with 5,000 concurrent connected
+clients spread across 250 channels. This is the current benchmark config limit,
+not a hard architectural limit. Larger deployments should raise `max_users`,
+raise file-descriptor limits, and benchmark on the target host. As a rule of
+thumb, a single process needs at least one file descriptor per local client plus
+headroom for listeners, server links, logs, and outbound files.
+
+The in-memory channel index benchmark uses 20,000 users, 5,000 channels, and
+100,000 user-channel memberships:
+
+* Indexed user-channel lookups: 100,000 queries in 6.83 ms
+  (~14.7 million lookups/s).
+* Old scan-style lookup over all channels: 100,000 queries in 10.19 seconds
+  (~9,800 lookups/s).
+* Removing 20,000 users from all joined channels: 15.09 ms.
+
+That supports IRC networks with tens of thousands of users and thousands of
+channels for membership-heavy operations on one process, assuming channel sizes
+and message rates are reasonable. Server-to-server networks should be kept to
+tens of directly linked servers until route-table caching and burst benchmarks
+are added; message propagation still fans out to linked servers. For large
+public networks, split users across linked servers and keep very large channels
+rare, because every channel message is still delivered to each recipient.
+
+CrIRCd uses bounded Crystal channels for per-client and server-link outbound
+queues, with writer fibers batching socket writes. Channel fanout remains a
+direct membership iteration instead of one pipe per IRC channel: Crystal
+channels are best used to communicate between fibers, while channel message
+delivery still has to visit each recipient. Extra per-channel pipes would add
+scheduling and backpressure overhead without reducing the O(channel members)
+delivery cost.
+
+To target 7,000-10,000 registrations per second, run release builds with low log
+volume, keep DNS asynchronous with a small registration wait, raise file
+descriptor limits, keep slow clients from blocking fanout with bounded outbound
+queues, and benchmark with realistic channel sizes and TLS settings.
+
+Run the benchmarks with:
+
+```bash
+crystal run --release benchmarks/channel_repository_benchmark.cr
+
+crystal build --release -o bin/circed src/circed.cr
+ulimit -n 8192
+LOG_LEVEL=ERROR bin/circed benchmarks/benchmark_config.yml
+```
+
+Then, from another shell with the same descriptor limit:
+
+```bash
+ulimit -n 8192
+crystal run --release benchmarks/local_client_load.cr -- 127.0.0.1 16680 3500 175 2 128
+```
+
+## Supported IRC Surface
+
+CrIRCd currently supports these client-facing commands:
+
+* Registration and connection: `NICK`, `USER`, `PASS`, `CAP`, `PING`, `PONG`,
+  `QUIT`, `AWAY`, `STARTTLS`
+* Messaging: `PRIVMSG`, `NOTICE`
+* Channels: `JOIN`, `PART`, `MODE`, `TOPIC`, `INVITE`, `KICK`, `NAMES`, `LIST`,
+  `WHO`
+* User/server queries: `WHOIS`, `LINKS`, `STATS`, `TIME`, `VERSION`, `ADMIN`
+
+Server-to-server links support handshake, burst, channel membership, user state,
+message routing, and basic server query propagation.
+
+Unsupported areas include IRC operator authentication, network GLines, and
+persistent IRC services.
+
+## Configuration Reload
+
+The server watches the config file and reloads scalar configuration into memory,
+but runtime sockets are not reconciled after reload. Restart the process after
+changing bind host, ports, SSL certificates, linked servers, or limits that need
+to affect already-running listeners and links.
+
+## DNS Hostnames
+
+Client hostnames are resolved asynchronously. New clients start with their IP
+address immediately, then CrIRCd queues a reverse DNS lookup. Before sending the
+registration welcome, the client waits up to `dns.registration_wait_ms` for a
+verified hostname. If DNS is slow, unavailable, or the PTR result does not
+forward-confirm back to the client IP, the IP address remains the hostname.
+
+```yaml
+dns:
+  enabled: true
+  server: "8.8.8.8"
+  port: 53
+  workers: 4
+  queue_size: 1024
+  timeout_seconds: 1
+  registration_wait_ms: 100
+  cache_ttl_seconds: 3600
+  negative_cache_ttl_seconds: 300
+```
+
+Keep `registration_wait_ms` small on high-throughput servers. Increase
+`workers` only if DNS latency is high and the queue backs up.
+
+## SSL/TLS Configuration
+
+CrIRCd supports secure connections using SSL/TLS for both clients and server-to-server communication.
+
+### Quick SSL Setup
+
+1. **Generate test certificates:**
+   ```bash
+   ./generate_ssl_certs.sh
+   ```
+
+2. **Enable SSL in config.yml:**
+   ```yaml
+   ssl:
+     enabled: true
+     port: 6697
+     cert_file: "ssl/server.crt"
+     key_file: "ssl/server.key"
+     starttls: true
+   ```
+
+3. **Start the server and connect:**
+   ```bash
+   ./circed config.yml
+
+   # Connect with SSL client
+   openssl s_client -connect localhost:6697
+   ```
+
+### Advanced SSL Configuration
+
+For production deployments with certificate verification:
+
+```yaml
+ssl:
+  enabled: true
+  port: 6697
+  cert_file: "/path/to/server.crt"
+  key_file: "/path/to/server.key"
+  ca_file: "/path/to/ca.crt"        # For client cert verification
+  verify_mode: true                 # Verify client certificates
+  starttls: true                    # Allow STARTTLS upgrade
+  require_ssl_for_servers: false    # Require SSL for server links
+```
+
+### Server-to-Server SSL
+
+Configure encrypted server links:
+
+```yaml
+linked_servers:
+  - host: "irc2.example.com"
+    port: 6697
+    link_password: "secure_password"
+    use_ssl: true
+    verify_ssl: true  # Verify server certificate
+```
+
+### Client Connection Methods
+
+**Direct SSL Connection (Port 6697):**
+```bash
+# IRC clients
+irssi -c irc.example.com -p 6697 --ssl
+
+# Testing with OpenSSL
+openssl s_client -connect localhost:6697
+```
+
+**STARTTLS Upgrade (Port 6667):**
+```
+STARTTLS
+# Server responds: 670 :STARTTLS successful, proceed with TLS handshake
+# Client performs TLS handshake
+```
+
+### SSL Security Features
+
+* **Modern TLS:** TLS 1.2+ only (SSLv2, SSLv3, TLS 1.0/1.1 disabled)
+* **Secure Ciphers:** ECDHE+AESGCM, ECDHE+CHACHA20, DHE+AESGCM
+* **Certificate Verification:** Optional mutual TLS with client certificates
+* **STARTTLS Support:** RFC-compliant connection upgrade
+
+### Production SSL Considerations
+
+1. **Use Valid Certificates:** Obtain from trusted CA (Let's Encrypt recommended)
+2. **Secure Key Storage:** Set appropriate file permissions (600 for private keys)
+3. **Certificate Renewal:** Implement automatic renewal processes
+4. **Monitoring:** Log SSL handshake success/failures for security monitoring
 
 ## Known issues
-* NAMES list of users in channel is not working correctly
-* Some things like NICK change won't update users in channels of the change yet
-* socket errors
-* timeout errors
+* Config reload does not recreate already-running sockets or server links
 
 ## Contributions
 Everyone is welcome to contribute. Fork this repo, make your changes and make a Pull Request explaining what you did and why. And I and others will review it and merge it if it make sense. :)

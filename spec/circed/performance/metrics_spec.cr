@@ -13,6 +13,16 @@ describe Circed::Performance::Metrics do
       snapshot = Circed::Performance::Metrics.snapshot
       snapshot[:messages_processed].should eq(8_u64)
     end
+
+    it "tracks command counts by normalized command name" do
+      Circed::Performance::Metrics.increment_command("privmsg")
+      Circed::Performance::Metrics.increment_command("PRIVMSG")
+      Circed::Performance::Metrics.increment_command("join")
+
+      counts = Circed::Performance::Metrics.command_counts
+      counts["PRIVMSG"].should eq(2_u64)
+      counts["JOIN"].should eq(1_u64)
+    end
   end
 
   describe "timing measurements" do
@@ -102,6 +112,7 @@ describe Circed::Performance::Metrics do
       snapshot = Circed::Performance::Metrics.snapshot
       snapshot[:messages_processed].should eq(0_u64)
       snapshot[:avg_burst_time].should eq(Time::Span.zero)
+      Circed::Performance::Metrics.command_counts.should be_empty
     end
   end
 end

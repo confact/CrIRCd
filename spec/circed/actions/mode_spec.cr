@@ -45,6 +45,69 @@ describe Circed::Actions::Mode do
     channel.try(&.modes.includes?('m')).should be_true
   end
 
+  it "sets and removes a channel ban mask" do
+    sender = create_test_client("Alice")
+    channel_name = "#test"
+
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.add_member(sender.nickname.to_s)
+    domain_channel.members[sender.nickname.to_s] << 'o'
+
+    Circed::Actions::Mode.call(sender, [channel_name, "+b", "*!*@localhost"])
+
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.ban_list.should contain("*!*@localhost")
+      ch.modes.includes?('b').should be_true
+    end
+
+    Circed::Actions::Mode.call(sender, [channel_name, "-b", "*!*@localhost"])
+
+    if ch = channel
+      ch.ban_list.should be_empty
+      ch.modes.includes?('b').should be_false
+    end
+  end
+
+  it "sets key and user limit channel modes" do
+    sender = create_test_client("Alice")
+    channel_name = "#test"
+
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.add_member(sender.nickname.to_s)
+    domain_channel.members[sender.nickname.to_s] << 'o'
+
+    Circed::Actions::Mode.call(sender, [channel_name, "+kl", "secret", "25"])
+
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.password.should eq("secret")
+      ch.user_limit.should eq(25)
+      ch.modes.includes?('k').should be_true
+      ch.modes.includes?('l').should be_true
+    end
+  end
+
+  it "returns channel modes for a mode query" do
+    sender = create_test_client("Alice")
+    channel_name = "#test"
+
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.add_member(sender.nickname.to_s)
+    domain_channel.members[sender.nickname.to_s] << 'o'
+    domain_channel.modes << 's'
+    domain_channel.password = "secret"
+    domain_channel.user_limit = 10
+
+    Circed::Actions::Mode.call(sender, [channel_name])
+
+    socket = sender.socket.as(DummySocket)
+    socket.sent_data.join.should contain(" 324 Alice #test +skl secret 10")
+    socket.sent_data.join.should contain(" 329 Alice #test ")
+  end
+
   it "remove a user mode" do
     sender = create_test_client("Alice")
     receiver = create_test_client("Bob")

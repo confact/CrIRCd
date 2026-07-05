@@ -10,9 +10,13 @@ module Circed
 
       Performance::Metrics.time_message_processing do
         begin
-          result = socket.try(&.puts(message))
-          Performance::Metrics.increment_messages if result
-          !result.nil?
+          return false unless socket_ref = socket
+
+          socket_ref.write(message.to_slice)
+          socket_ref.write("\r\n".to_slice)
+          socket_ref.flush
+          Performance::Metrics.increment_messages
+          true
         rescue ex
           Log.error { "Failed to send message: #{ex.message}" }
           false
@@ -186,9 +190,9 @@ module Circed
       return unless sender.nickname
 
       if args.size == 1
-        io << ':' << sender.hostmask << " NICK :" << args[0] << '\n'
+        io << ':' << sender.hostmask << " NICK :" << args[0] << "\r\n"
       else
-        io << ':' << sender.hostmask << ' ' << args.join(' ') << '\n'
+        io << ':' << sender.hostmask << ' ' << args.join(' ') << "\r\n"
       end
     end
   end

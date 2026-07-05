@@ -24,9 +24,10 @@ module Circed
 
       def notify_user_parted(nickname : String, channel_name : String, reason : String? = nil)
         if user = @user_repository.get(nickname)
-          message_parts = [":#{user.hostmask} PART #{channel_name}"]
-          message_parts << ":#{reason}" if reason
-          message = message_parts.join(" ")
+          message = String.build do |io|
+            io << ':' << user.hostmask << " PART " << channel_name
+            io << " :" << reason if reason
+          end
 
           send_to_channel_members(channel_name, message)
         end
@@ -34,9 +35,10 @@ module Circed
 
       def notify_user_quit(nickname : String, reason : String? = nil)
         if user = @user_repository.get(nickname)
-          message_parts = [":#{user.hostmask} QUIT"]
-          message_parts << ":#{reason}" if reason
-          message = message_parts.join(" ")
+          message = String.build do |io|
+            io << ':' << user.hostmask << " QUIT"
+            io << " :" << reason if reason
+          end
 
           send_to_shared_channel_members(nickname, message)
         end
@@ -58,9 +60,12 @@ module Circed
 
       def notify_mode_change(channel_name : String, modes : String, set_by : String, targets : Array(String) = [] of String)
         if user = @user_repository.get(set_by)
-          message_parts = [":#{user.hostmask} MODE #{channel_name} #{modes}"]
-          message_parts.concat(targets) unless targets.empty?
-          message = message_parts.join(" ")
+          message = String.build do |io|
+            io << ':' << user.hostmask << " MODE " << channel_name << ' ' << modes
+            targets.each do |target|
+              io << ' ' << target
+            end
+          end
 
           send_to_channel_members(channel_name, message)
         end
@@ -68,9 +73,10 @@ module Circed
 
       def notify_user_kicked(channel_name : String, kicked_user : String, kicker : String, reason : String? = nil)
         if user = @user_repository.get(kicker)
-          message_parts = [":#{user.hostmask} KICK #{channel_name} #{kicked_user}"]
-          message_parts << ":#{reason}" if reason
-          message = message_parts.join(" ")
+          message = String.build do |io|
+            io << ':' << user.hostmask << " KICK " << channel_name << ' ' << kicked_user
+            io << " :" << reason if reason
+          end
 
           send_to_channel_members(channel_name, message)
         end
@@ -104,6 +110,23 @@ module Circed
         end
       end
 
+      def notify_channel_notice(sender : String, channel_name : String, message_text : String)
+        if user = @user_repository.get(sender)
+          message = ":#{user.hostmask} NOTICE #{channel_name} :#{message_text}"
+          send_to_channel_members(channel_name, message, sender)
+        end
+      end
+
+      def notify_private_notice(sender : String, target : String, message_text : String)
+        if user = @user_repository.get(sender)
+          message = ":#{user.hostmask} NOTICE #{target} :#{message_text}"
+
+          if client = @user_repository.get_client(target)
+            client.send_message(message)
+          end
+        end
+      end
+
       def notify_netsplit(affected_users : Array(Domain::User), reason : String)
         affected_users.each do |user|
           quit_message = ":#{user.hostmask} QUIT :#{reason}"
@@ -126,56 +149,57 @@ module Circed
       def notify_remote_user_joined(nickname : String, username : String, hostname : String, channel_name : String)
         hostmask = "#{nickname}!#{username}@#{hostname}"
         message = ":#{hostmask} JOIN #{channel_name}"
-        send_to_local_channel_members(channel_name, message, nickname)
+        send_to_channel_members(channel_name, message, nickname)
       end
 
       def notify_remote_user_parted(nickname : String, username : String, hostname : String,
                                     channel_name : String, reason : String? = nil)
         hostmask = "#{nickname}!#{username}@#{hostname}"
-        message_parts = [":#{hostmask} PART #{channel_name}"]
-        message_parts << ":#{reason}" if reason
-        message = message_parts.join(" ")
+        message = String.build do |io|
+          io << ':' << hostmask << " PART " << channel_name
+          io << " :" << reason if reason
+        end
 
-        send_to_local_channel_members(channel_name, message)
+        send_to_channel_members(channel_name, message)
       end
 
       def notify_remote_user_quit(nickname : String, username : String, hostname : String, reason : String? = nil)
         hostmask = "#{nickname}!#{username}@#{hostname}"
-        message_parts = [":#{hostmask} QUIT"]
-        message_parts << ":#{reason}" if reason
-        message = message_parts.join(" ")
+        message = String.build do |io|
+          io << ':' << hostmask << " QUIT"
+          io << " :" << reason if reason
+        end
 
-        send_to_local_shared_channel_members(nickname, message)
+        send_to_shared_channel_members(nickname, message)
+      end
+
+      def notify_quit_in_channels(nickname : String, channels : Array(Domain::Channel), message : String) : Nil
+        notified_users = Set(String).new
+
+        channels.each do |channel|
+          channel.members.each_key do |member_nickname|
+            next if member_nickname == nickname || notified_users.includes?(member_nickname)
+
+            if (client = @user_repository.get_client(member_nickname)) && !client.closed?
+              client.send_message(message)
+              notified_users << member_nickname
+            end
+          end
+        end
       end
 
       def notify_batch_join(channel_name : String, nicknames : Array(String))
         nicknames.each do |nickname|
           if user = @user_repository.get(nickname)
             message = ":#{user.hostmask} JOIN #{channel_name}"
-            send_to_local_channel_members(channel_name, message, nickname)
+            send_to_channel_members(channel_name, message, nickname)
           end
         end
       end
 
       private def send_to_channel_members(channel_name : String, message : String, exclude_nickname : String? = nil)
         if channel = @channel_repository.get(channel_name)
-          channel.members.keys.each do |nickname|
-            next if exclude_nickname && nickname == exclude_nickname
-
-            if client = @user_repository.get_client(nickname)
-              client.send_message(message)
-            end
-          end
-        end
-      end
-
-      private def send_to_local_channel_members(channel_name : String, message : String, exclude_nickname : String? = nil)
-        if channel = @channel_repository.get(channel_name)
-          local_members = channel.members.keys.select do |nickname|
-            @user_repository.has_client?(nickname)
-          end
-
-          local_members.each do |nickname|
+          channel.members.each_key do |nickname|
             next if exclude_nickname && nickname == exclude_nickname
 
             if client = @user_repository.get_client(nickname)
@@ -191,30 +215,8 @@ module Circed
         notified_users = Set(String).new
 
         user_channels.each do |channel|
-          channel.members.keys.each do |member_nickname|
+          channel.members.each_key do |member_nickname|
             next if notified_users.includes?(member_nickname)
-            next unless @user_repository.has_client?(member_nickname)
-
-            if client = @user_repository.get_client(member_nickname)
-              client.send_message(message)
-              notified_users << member_nickname
-            end
-          end
-        end
-      end
-
-      private def send_to_local_shared_channel_members(nickname : String, message : String)
-        # Similar to above but for remote users - find channels they were in
-        affected_channels = @channel_repository.all.select do |channel|
-          channel.has_member?(nickname)
-        end
-
-        notified_users = Set(String).new
-
-        affected_channels.each do |channel|
-          channel.members.keys.each do |member_nickname|
-            next if notified_users.includes?(member_nickname)
-            next unless @user_repository.has_client?(member_nickname)
 
             if client = @user_repository.get_client(member_nickname)
               client.send_message(message)

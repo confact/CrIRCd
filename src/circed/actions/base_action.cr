@@ -119,7 +119,7 @@ module Circed
         unique_users = Set(String).new
 
         user_channels.each do |channel|
-          channel.members.keys.each { |nickname| unique_users << nickname }
+          channel.members.each_key { |nickname| unique_users << nickname }
         end
 
         # Send to each user
@@ -135,9 +135,13 @@ module Circed
         return unless sender.nickname
 
         if args.size == 1
-          io << ':' << sender.hostmask << " NICK :" << args[0] << '\n'
+          io << ':' << sender.hostmask << " NICK :" << args[0] << "\r\n"
         else
-          io << ':' << sender.hostmask << ' ' << args.join(' ') << '\n'
+          io << ':' << sender.hostmask
+          args.each do |arg|
+            io << ' ' << arg
+          end
+          io << "\r\n"
         end
       end
     end

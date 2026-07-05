@@ -87,7 +87,7 @@ describe Circed::Actions::Topic do
     end
   end
 
-  it "returns an error when a non-operator sets a topic" do
+  it "lets a channel member set a topic when the channel is not topic-protected" do
     sender = create_test_client("Alice")
     other_user = create_test_client("Bob")
     channel_name = "#test"
@@ -100,11 +100,74 @@ describe Circed::Actions::Topic do
     new_topic = "new topic"
     Circed::Actions::Topic.call(sender, [channel_name, new_topic])
 
-    # Topic should not be changed since Alice is not an operator
     channel = get_test_channel(channel_name)
     channel.should_not be_nil
     if ch = channel
-      ch.topic.should_not eq(new_topic)
+      ch.topic.should eq(new_topic)
+      ch.topic_set_by.should eq("Alice")
+      ch.topic_set_at.should_not be_nil
+    end
+  end
+
+  it "returns an error when a non-operator sets a topic on a topic-protected channel" do
+    sender = create_test_client("Alice")
+    other_user = create_test_client("Bob")
+    channel_name = "#test"
+
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.add_member(other_user.nickname.to_s)
+    domain_channel.members[other_user.nickname.to_s] << 'o'
+    domain_channel.add_member(sender.nickname.to_s)
+    domain_channel.modes << 't'
+
+    new_topic = "new topic"
+    Circed::Actions::Topic.call(sender, [channel_name, new_topic])
+
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.topic.should be_nil
+      ch.topic_set_by.should be_nil
+      ch.topic_set_at.should be_nil
+    end
+  end
+
+  it "returns the current topic without requiring operator status" do
+    sender = create_test_client("Alice")
+    other_user = create_test_client("Bob")
+    channel_name = "#test"
+
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.add_member(other_user.nickname.to_s)
+    domain_channel.add_member(sender.nickname.to_s)
+    domain_channel.topic = "current topic"
+    domain_channel.topic_set_by = "Bob"
+    domain_channel.topic_set_at = Time.utc
+
+    Circed::Actions::Topic.call(sender, [channel_name])
+
+    socket = sender.socket.as(DummySocket)
+    socket.sent_data.join.should contain(" 332 Alice #test :current topic")
+    socket.sent_data.join.should contain(" 333 Alice #test Bob ")
+  end
+
+  it "clears the channel topic when an empty topic is supplied" do
+    sender = create_test_client("Alice")
+    channel_name = "#test"
+
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.add_member(sender.nickname.to_s)
+    domain_channel.members[sender.nickname.to_s] << 'o'
+    domain_channel.topic = "current topic"
+    domain_channel.topic_set_by = "Alice"
+    domain_channel.topic_set_at = Time.utc
+
+    Circed::Actions::Topic.call(sender, [channel_name, ""])
+
+    channel = get_test_channel(channel_name)
+    channel.should_not be_nil
+    if ch = channel
+      ch.topic.should be_nil
       ch.topic_set_by.should be_nil
       ch.topic_set_at.should be_nil
     end

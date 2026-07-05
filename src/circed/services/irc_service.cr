@@ -6,6 +6,11 @@ require "../utils/irc_utils"
 module Circed
   module Services
     class IRCService
+      SIMPLE_CHANNEL_MODES = {'i', 'm', 'n', 't', 's', 'p'}
+      USER_CHANNEL_MODES   = {'o', 'h', 'v'}
+      SELF_USER_MODES      = {'i', 'w'}
+      CHANNEL_MODE_ORDER   = {'p', 's', 'i', 'm', 'n', 't', 'k', 'l', 'b'}
+
       def initialize(@user_repository : Repositories::UserRepository,
                      @channel_repository : Repositories::ChannelRepository,
                      @notification_service : NotificationService)
@@ -16,6 +21,12 @@ module Circed
       # User joins a channel with proper validation, notifications, and network sync
       def join_channel(client : Client, channel_name : String, password : String? = nil) : Bool
         return false unless nickname = client.nickname
+
+        # If client is not registered yet (no USER info), require registration before JOIN
+        unless client.user
+          client.send_message(Server.clean_name, Numerics::ERR_NOTREGISTERED, nickname, ":You have not registered")
+          return false
+        end
 
         # Basic format validation
         return false unless Utils::IrcUtils.validate_channel_name(client, channel_name)
@@ -35,18 +46,25 @@ module Circed
         end
 
         # Add user to channel
-        channel.add_member(nickname)
+        @channel_repository.add_member(channel.name, nickname)
 
-        # Make first user an operator
+        # Make first user an operator (before sending any messages)
+        is_operator = false
         if channel.member_count == 1
           channel.members[nickname] << 'o'
+          is_operator = true
         end
 
         # Sync with network state
         sync_join_with_network(nickname, channel_name)
 
-        # Send JOIN confirmation to the user
+        # Send JOIN confirmation to the user (first message)
         client.send_message(":#{client.hostmask} JOIN #{channel_name}")
+
+        # Send MODE message if user became operator (second message)
+        if is_operator
+          client.send_message(":#{client.hostmask} MODE #{channel_name} +o #{nickname}")
+        end
 
         # Send topic if channel has one
         if topic = channel.topic
@@ -83,18 +101,18 @@ module Circed
           return false
         end
 
+        part_message = build_part_message(client, channel_name, reason)
+        client.send_message(part_message)
+
         # Remove user from channel
-        channel.remove_member(nickname)
+        @channel_repository.part_user(channel.name, nickname)
 
         # Sync with network state
         sync_part_with_network(nickname, channel_name)
 
-        # Send notifications
+        # Send notifications to other channel members
         @notification_service.notify_user_parted(nickname, channel_name, reason)
 
-        # Propagate to network
-        part_message = ":#{client.hostmask} PART #{channel_name}"
-        part_message += " :#{reason}" if reason
         propagate_to_network(part_message)
 
         # Clean up empty channel
@@ -116,11 +134,15 @@ module Circed
 
         # Update client's nickname
         client.nickname = new_nickname
+        update_channel_membership_nickname(old_nickname, new_nickname)
 
         # Sync with network state
         sync_nick_with_network(old_nickname, new_nickname)
 
         # Send notifications
+        if user = @user_repository.get(new_nickname)
+          client.send_message(":#{old_nickname}!#{user.username}@#{user.hostname} NICK #{new_nickname}")
+        end
         @notification_service.notify_nick_change(old_nickname, new_nickname)
 
         # Propagate to network
@@ -131,20 +153,16 @@ module Circed
         true
       end
 
+      private def update_channel_membership_nickname(old_nickname : String, new_nickname : String)
+        @channel_repository.rename_member(old_nickname, new_nickname)
+      end
+
       # Handle user quit with network sync
       def quit_user(client : Client, reason : String? = nil) : Bool
         return false unless nickname = client.nickname
 
-        # Get user channels before removal
-        user_channels = @channel_repository.find_user_channels(nickname)
-
         # Remove from all channels
-        user_channels.each do |channel|
-          channel.remove_member(nickname)
-          if channel.empty?
-            @channel_repository.remove(channel.name)
-          end
-        end
+        @channel_repository.remove_user_from_all_channels(nickname)
 
         # Sync with network state
         sync_quit_with_network(nickname)
@@ -168,7 +186,7 @@ module Circed
         sender_nick = sender.nickname
         return false unless sender_nick
 
-        if target.starts_with?("#")
+        if Utils::IrcUtils.valid_channel_name?(target)
           # Channel message
           route_channel_message(sender, target, message)
         else
@@ -177,39 +195,34 @@ module Circed
         end
       end
 
+      def route_notice(sender : Client, target : String, message : String) : Bool
+        sender_nick = sender.nickname
+        return false unless sender_nick
+
+        if Utils::IrcUtils.valid_channel_name?(target)
+          # Channel notice
+          route_channel_notice(sender, target, message)
+        else
+          # Private notice
+          route_private_notice(sender, target, message)
+        end
+      end
+
       # Set channel topic with validation and network sync
       def update_topic(client : Client, channel_name : String, topic : String) : Bool
         return false unless nickname = client.nickname
-
-        # Basic format validation
-        unless channel_name.starts_with?("#") || channel_name.starts_with?("&")
-          Utils::IrcUtils.send_channel_error(client, channel_name)
-          return false
-        end
-
-        channel = @channel_repository.get(channel_name)
-        unless channel
-          Utils::IrcUtils.send_no_such_channel_error(client, channel_name)
-          return false
-        end
-
-        # Check if user is in channel
-        unless channel.has_member?(nickname)
-          Utils::IrcUtils.send_not_on_channel_error(client, channel_name)
-          return false
-        end
-
-        # Check if user is operator
-        user_modes = channel.members[nickname]?
-        unless user_modes && user_modes.includes?('o')
-          Utils::IrcUtils.send_not_operator_error(client, channel_name)
-          return false
-        end
+        return false unless channel = validate_topic_change(client, channel_name, nickname)
 
         # Set topic
-        channel.topic = topic
-        channel.topic_set_by = nickname
-        channel.topic_set_at = Time.utc
+        if topic.empty?
+          channel.topic = nil
+          channel.topic_set_by = nil
+          channel.topic_set_at = nil
+        else
+          channel.topic = topic
+          channel.topic_set_by = nickname
+          channel.topic_set_at = Time.utc
+        end
 
         # Send notifications
         @notification_service.notify_topic_change(channel_name, topic, nickname)
@@ -220,22 +233,9 @@ module Circed
         true
       end
 
-      # Change channel or user modes with network sync
-      def change_mode(client : Client, target : String, mode_string : String, mode_target : String? = nil) : Bool
-        nickname = client.nickname
-        return false unless nickname
-
-        if target.starts_with?("#") || target.starts_with?("&")
-          # Channel mode
-          change_channel_mode(client, target, mode_string, mode_target)
-        else
-          # User mode
-          change_user_mode(client, target, mode_string)
-        end
-      end
-
-      private def change_channel_mode(client : Client, channel_name : String, mode_string : String, target : String? = nil) : Bool
+      def query_topic(client : Client, channel_name : String) : Bool
         return false unless nickname = client.nickname
+        return false unless Utils::IrcUtils.validate_channel_name(client, channel_name)
 
         channel = @channel_repository.get(channel_name)
         unless channel
@@ -243,53 +243,239 @@ module Circed
           return false
         end
 
-        # Check if user is in channel and is operator
-        unless channel.has_member?(nickname)
-          Utils::IrcUtils.send_not_on_channel_error(client, channel_name)
+        if topic = channel.topic
+          client.send_message(Server.clean_name, Numerics::RPL_TOPIC, nickname, channel_name, ":#{topic}")
+          if (topic_by = channel.topic_set_by) && (topic_time = channel.topic_set_at)
+            client.send_message(Server.clean_name, Numerics::RPL_TOPICTIME, nickname, channel_name, topic_by, topic_time.to_unix.to_s)
+          end
+        else
+          client.send_message(Server.clean_name, Numerics::RPL_NOTOPIC, nickname, channel_name, ":No topic is set")
+        end
+
+        true
+      end
+
+      # Change channel or user modes with network sync
+      def change_mode(client : Client, target : String, mode_string : String, mode_params : Array(String) = [] of String) : Bool
+        nickname = client.nickname
+        return false unless nickname
+
+        if Utils::IrcUtils.valid_channel_name?(target)
+          # Channel mode
+          change_channel_mode(client, target, mode_string, mode_params)
+        else
+          # User mode
+          change_user_mode(client, target, mode_string)
+        end
+      end
+
+      def query_mode(client : Client, target : String) : Bool
+        nickname = client.nickname
+        return false unless nickname
+
+        if Utils::IrcUtils.valid_channel_name?(target)
+          query_channel_mode(client, target, nickname)
+        else
+          query_user_mode(client, target, nickname)
+        end
+      end
+
+      private def query_channel_mode(client : Client, channel_name : String, nickname : String) : Bool
+        channel = @channel_repository.get(channel_name)
+        unless channel
+          Utils::IrcUtils.send_no_such_channel_error(client, channel_name)
           return false
         end
 
-        user_modes = channel.members[nickname]?
-        unless user_modes && user_modes.includes?('o')
-          Utils::IrcUtils.send_not_operator_error(client, channel_name)
+        modes, params = build_channel_mode_query(channel)
+        client.send_message(String.build do |io|
+          io << Server.clean_name << ' ' << Numerics::RPL_CHANNELMODEIS << ' ' << nickname << ' ' << channel.name << ' ' << modes
+          params.each do |param|
+            io << ' ' << param
+          end
+        end)
+        client.send_message(
+          Server.clean_name,
+          Numerics::RPL_CREATIONTIME,
+          nickname,
+          channel.name,
+          channel.created_at.to_unix.to_s
+        )
+        true
+      end
+
+      private def query_user_mode(client : Client, target : String, nickname : String) : Bool
+        unless target == nickname
+          Utils::IrcUtils.send_users_dont_match_error(client)
           return false
         end
+
+        user = @user_repository.get(nickname)
+        unless user
+          Utils::IrcUtils.send_no_such_nick_error(client, target)
+          return false
+        end
+
+        client.send_message(
+          Server.clean_name,
+          Numerics::RPL_UMODEIS,
+          nickname,
+          ":#{build_user_mode_string(user)}"
+        )
+        true
+      end
+
+      private def build_channel_mode_query(channel : Domain::Channel) : Tuple(String, Array(String))
+        params = [] of String
+        modes = String.build do |io|
+          io << '+'
+          CHANNEL_MODE_ORDER.each do |mode_char|
+            next unless channel.modes.includes?(mode_char)
+
+            case mode_char
+            when 'k'
+              next unless password = channel.password
+              params << password
+            when 'l'
+              next unless limit = channel.user_limit
+              params << limit.to_s
+            when 'b'
+              next if channel.ban_list.empty?
+            end
+
+            io << mode_char
+          end
+        end
+
+        {modes, params}
+      end
+
+      private def change_channel_mode(client : Client, channel_name : String, mode_string : String, mode_params : Array(String) = [] of String) : Bool
+        return false unless nickname = client.nickname
+        return false unless channel = validate_channel_operator(client, channel_name, nickname)
 
         # Parse mode string
         return false if mode_string.size < 2
 
-        adding = mode_string.starts_with?("+")
-        mode_char = mode_string[1]
+        adding = true
+        parameter_index = 0
+        last_sign = '\0'
+        applied_modes = String.build do |io|
+          mode_string.each_char do |mode_char|
+            case mode_char
+            when '+'
+              adding = true
+            when '-'
+              adding = false
+            else
+              parameter = nil
+              if channel_mode_needs_parameter?(mode_char, adding)
+                parameter = mode_params[parameter_index]?
+                parameter_index += 1
+                next unless parameter
+              end
 
-        case mode_char
-        when 'i', 'm', 'n', 't', 's', 'p' # Simple channel modes
-          if adding
-            channel.modes << mode_char
-          else
-            channel.modes.delete(mode_char)
-          end
-        when 'o', 'h', 'v' # User modes in channel
-          return false unless target && channel.has_member?(target)
+              next unless apply_channel_mode(channel, mode_char, adding, parameter)
 
-          target_modes = channel.members[target]
-          if adding
-            target_modes << mode_char
-          else
-            target_modes.delete(mode_char)
+              sign = adding ? '+' : '-'
+              if sign != last_sign
+                io << sign
+                last_sign = sign
+              end
+              io << mode_char
+            end
           end
-        else
-          return false
         end
 
+        return false if applied_modes.empty?
+
         # Send notifications
-        targets = target ? [target] : [] of String
-        @notification_service.notify_mode_change(channel_name, mode_string, nickname, targets)
+        @notification_service.notify_mode_change(channel_name, applied_modes, nickname, mode_params[0...parameter_index])
 
         # Propagate to network
-        mode_message = ":#{client.hostmask} MODE #{channel_name} #{mode_string}"
-        mode_message += " #{target}" if target
+        mode_message = String.build do |io|
+          io << ':' << (client.hostmask || "") << " MODE " << channel_name << ' ' << applied_modes
+          mode_params[0...parameter_index].each do |parameter|
+            io << ' ' << parameter
+          end
+        end
         propagate_to_network(mode_message)
 
+        true
+      end
+
+      private def channel_mode_needs_parameter?(mode_char : Char, adding : Bool) : Bool
+        case mode_char
+        when 'o', 'h', 'v', 'b'
+          true
+        when 'k'
+          adding
+        when 'l'
+          adding
+        else
+          false
+        end
+      end
+
+      private def apply_channel_mode(channel : Domain::Channel, mode_char : Char, adding : Bool, parameter : String?) : Bool
+        if SIMPLE_CHANNEL_MODES.includes?(mode_char)
+          return apply_simple_channel_mode(channel, mode_char, adding)
+        end
+
+        if USER_CHANNEL_MODES.includes?(mode_char)
+          return apply_user_channel_mode(channel, mode_char, adding, parameter)
+        end
+
+        case mode_char
+        when 'b'
+          apply_ban_mode(channel, adding, parameter)
+        when 'k'
+          apply_key_mode(channel, adding, parameter)
+        when 'l'
+          apply_limit_mode(channel, adding, parameter)
+        else
+          false
+        end
+      end
+
+      private def apply_simple_channel_mode(channel : Domain::Channel, mode_char : Char, adding : Bool) : Bool
+        adding ? channel.modes << mode_char : channel.modes.delete(mode_char)
+        true
+      end
+
+      private def apply_user_channel_mode(channel : Domain::Channel, mode_char : Char, adding : Bool, parameter : String?) : Bool
+        return false unless parameter && channel.has_member?(parameter)
+
+        target_modes = channel.members[parameter]
+        adding ? target_modes << mode_char : target_modes.delete(mode_char)
+        true
+      end
+
+      private def apply_ban_mode(channel : Domain::Channel, adding : Bool, parameter : String?) : Bool
+        return false unless parameter
+
+        adding ? channel.add_ban(parameter) : channel.remove_ban(parameter)
+        true
+      end
+
+      private def apply_key_mode(channel : Domain::Channel, adding : Bool, parameter : String?) : Bool
+        return false if adding && parameter.nil?
+
+        channel.password = adding ? parameter : nil
+        true
+      end
+
+      private def apply_limit_mode(channel : Domain::Channel, adding : Bool, parameter : String?) : Bool
+        unless adding
+          channel.user_limit = nil
+          return true
+        end
+
+        return false unless parameter
+        limit = parameter.to_i?
+        return false unless limit && limit > 0
+
+        channel.user_limit = limit
         true
       end
 
@@ -312,31 +498,7 @@ module Circed
         return false if mode_string.size < 2
 
         adding = mode_string.starts_with?("+")
-        modes_to_process = mode_string[1..].chars
-
-        modes_to_process.each do |mode_char|
-          case mode_char
-          when 'i' # Invisible mode
-            if adding
-              user.modes << mode_char
-            else
-              user.modes.delete(mode_char)
-            end
-          when 'w' # Wallops mode
-            if adding
-              user.modes << mode_char
-            else
-              user.modes.delete(mode_char)
-            end
-          when 'o' # Operator mode - can only be removed, not added via MODE
-            unless adding
-              user.modes.delete(mode_char)
-            end
-          else
-            # Unknown mode - ignore
-            next
-          end
-        end
+        mode_string[1..].each_char { |mode_char| apply_user_mode(user, mode_char, adding) }
 
         # Send mode change notification to user
         client.send_message(
@@ -360,33 +522,18 @@ module Circed
         "+#{user.modes.join("")}"
       end
 
+      private def apply_user_mode(user : Domain::User, mode_char : Char, adding : Bool)
+        if SELF_USER_MODES.includes?(mode_char)
+          adding ? user.modes << mode_char : user.modes.delete(mode_char)
+        elsif mode_char == 'o' && !adding
+          user.modes.delete(mode_char)
+        end
+      end
+
       # Kick user from channel with network sync
       def kick_user(client : Client, channel_name : String, target_nickname : String, reason : String? = nil) : Bool
         return false unless nickname = client.nickname
-
-        # Basic format validation
-        unless channel_name.starts_with?("#") || channel_name.starts_with?("&")
-          Utils::IrcUtils.send_channel_error(client, channel_name)
-          return false
-        end
-
-        channel = @channel_repository.get(channel_name)
-        unless channel
-          Utils::IrcUtils.send_no_such_channel_error(client, channel_name)
-          return false
-        end
-
-        # Check if user is in channel and is operator
-        unless channel.has_member?(nickname)
-          Utils::IrcUtils.send_not_on_channel_error(client, channel_name)
-          return false
-        end
-
-        user_modes = channel.members[nickname]?
-        unless user_modes && user_modes.includes?('o')
-          Utils::IrcUtils.send_not_operator_error(client, channel_name)
-          return false
-        end
+        return false unless channel = validate_channel_operator(client, channel_name, nickname)
 
         # Check if target is in channel
         unless channel.has_member?(target_nickname)
@@ -402,7 +549,7 @@ module Circed
         end
 
         # Remove target from channel
-        channel.remove_member(target_nickname)
+        @channel_repository.part_user(channel.name, target_nickname)
 
         # Send notifications to remaining channel members
         @notification_service.notify_user_kicked(channel_name, target_nickname, nickname, reason)
@@ -427,6 +574,7 @@ module Circed
             user.realname,
             user.server
           )
+          propagate_user_to_network(nickname, user)
           true
         else
           false
@@ -455,14 +603,58 @@ module Circed
         end
 
         # Ban checking
-        if hostmask = client.hostmask
-          if channel.banned?(hostmask)
+        if ban_context = client.ban_match_context
+          if channel.banned?(ban_context)
             Utils::IrcUtils.send_banned_from_channel_error(client, channel.name)
             return false
           end
         end
 
         true
+      end
+
+      private def validate_channel_operator(client : Client, channel_name : String, nickname : String) : Domain::Channel?
+        return nil unless Utils::IrcUtils.validate_channel_name(client, channel_name)
+
+        channel = @channel_repository.get(channel_name)
+        unless channel
+          Utils::IrcUtils.send_no_such_channel_error(client, channel_name)
+          return nil
+        end
+
+        unless channel.has_member?(nickname)
+          Utils::IrcUtils.send_not_on_channel_error(client, channel_name)
+          return nil
+        end
+
+        unless Utils::IrcUtils.user_is_operator?(channel, nickname)
+          Utils::IrcUtils.send_not_operator_error(client, channel_name)
+          return nil
+        end
+
+        channel
+      end
+
+      private def validate_topic_change(client : Client, channel_name : String, nickname : String) : Domain::Channel?
+        return nil unless Utils::IrcUtils.validate_channel_name(client, channel_name)
+
+        channel = @channel_repository.get(channel_name)
+        unless channel
+          Utils::IrcUtils.send_no_such_channel_error(client, channel_name)
+          return nil
+        end
+
+        unless channel.has_member?(nickname)
+          Utils::IrcUtils.send_not_on_channel_error(client, channel_name)
+          return nil
+        end
+
+        if channel.has_mode?('t') && !Utils::IrcUtils.user_is_operator?(channel, nickname)
+          Utils::IrcUtils.send_not_operator_error(client, channel_name)
+          return nil
+        end
+
+        channel
       end
 
       # Network synchronization methods
@@ -499,6 +691,24 @@ module Circed
         end
       end
 
+      private def build_part_message(client : Client, channel_name : String, reason : String? = nil) : String
+        String.build do |io|
+          io << ':' << client.hostmask << " PART " << channel_name
+          io << " :" << reason if reason
+        end
+      end
+
+      private def propagate_user_to_network(nickname : String, user : Domain::User)
+        modes = user.modes.empty? ? "+" : "+#{user.modes.join}"
+        message = String.build do |io|
+          io << "NICK " << nickname << " 1 "
+          io << user.username << ' ' << user.hostname << ' '
+          io << Server.name << ' ' << modes << " :" << user.realname
+        end
+
+        propagate_to_network(message)
+      end
+
       private def route_channel_message(sender : Client, channel_name : String, message : String) : Bool
         return false unless sender_nick = sender.nickname
 
@@ -520,53 +730,71 @@ module Circed
       private def route_private_message(sender : Client, target : String, message : String) : Bool
         return false unless sender_nick = sender.nickname
 
-        # Check if target is local
         if @user_repository.has_client?(target)
-          # Check if target is away
-          if target_user = @user_repository.get(target)
-            if target_user.away? && target_user.away_message
-              # Send away message to sender
-              sender.send_message(
-                Server.clean_name,
-                Numerics::RPL_AWAY,
-                sender_nick,
-                target,
-                ":#{target_user.away_message}"
-              )
-            end
-          end
-
+          send_away_reply(sender, sender_nick, target)
           @notification_service.notify_private_message(sender_nick, target, message)
           true
         else
-          # Check if target exists in network
-          if Network::NetworkState.get_user(target)
-            # Route to appropriate server
-            if target_server = find_user_server(target)
-              route_to_server = find_route_to_server(target_server)
-              if route_to_server
-                # Find the server by name
-                server = ServerHandler.servers.find { |server_handler| server_handler.name == route_to_server }
-                if server
-                  server.safe_send(":#{sender.hostmask} PRIVMSG #{target} :#{message}")
-                  true
-                else
-                  Utils::IrcUtils.send_no_such_nick_error(sender, target)
-                  false
-                end
-              else
-                Utils::IrcUtils.send_no_such_nick_error(sender, target)
-                false
-              end
-            else
-              Utils::IrcUtils.send_no_such_nick_error(sender, target)
-              false
-            end
-          else
-            Utils::IrcUtils.send_no_such_nick_error(sender, target)
-            false
-          end
+          route_remote_user_message(sender, target, "PRIVMSG", message, send_errors: true)
         end
+      end
+
+      private def route_channel_notice(sender : Client, channel_name : String, message : String) : Bool
+        return false unless sender_nick = sender.nickname
+
+        # Check if sender is in channel
+        unless @channel_repository.user_in_channel?(channel_name, sender_nick)
+          # Notices don't send error responses - they just fail silently
+          return false
+        end
+
+        # Send to local channel members
+        @notification_service.notify_channel_notice(sender_nick, channel_name, message)
+
+        # Propagate to network
+        propagate_to_network(":#{sender.hostmask} NOTICE #{channel_name} :#{message}")
+
+        true
+      end
+
+      private def route_private_notice(sender : Client, target : String, message : String) : Bool
+        return false unless sender_nick = sender.nickname
+
+        if @user_repository.has_client?(target)
+          @notification_service.notify_private_notice(sender_nick, target, message)
+          true
+        else
+          route_remote_user_message(sender, target, "NOTICE", message, send_errors: false)
+        end
+      end
+
+      private def send_away_reply(sender : Client, sender_nick : String, target : String)
+        return unless target_user = @user_repository.get(target)
+        return unless away_message = target_user.away_message
+
+        sender.send_message(
+          Server.clean_name,
+          Numerics::RPL_AWAY,
+          sender_nick,
+          target,
+          ":#{away_message}"
+        )
+      end
+
+      private def route_remote_user_message(sender : Client, target : String, command : String, message : String, send_errors : Bool) : Bool
+        target_server = find_user_server(target)
+        unless target_server
+          Utils::IrcUtils.send_no_such_nick_error(sender, target) if send_errors
+          return false
+        end
+
+        server = find_server_for_route(target_server)
+        unless server && server.safe_send(":#{sender.hostmask} #{command} #{target} :#{message}")
+          Utils::IrcUtils.send_no_such_nick_error(sender, target) if send_errors
+          return false
+        end
+
+        true
       end
 
       private def find_user_server(nickname : String) : String?
@@ -577,6 +805,21 @@ module Circed
         Network::NetworkState.route_to_server(target_server)
       end
 
+      private def find_server_for_route(target_server : String) : LinkServer?
+        route_to_server = find_route_to_server(target_server)
+        if route_to_server
+          ServerHandler.servers.find { |server_handler| server_handler.name == route_to_server }
+        elsif !ServerHandler.servers.empty?
+          ServerHandler.servers.first
+        end
+      end
+
+      def add_channel_invite(channel_name : String, user_nickname : String) : Nil
+        if channel = @channel_repository.get(channel_name)
+          channel.add_invite(user_nickname)
+        end
+      end
+
       # Send NAMES list for a channel to a client
       private def send_names_list(client : Client, channel : Domain::Channel)
         return unless nickname = client.nickname
@@ -584,8 +827,8 @@ module Circed
         # Debug: log channel members
         Log.debug { "Channel #{channel.name} members: #{channel.members.keys.inspect}" }
 
-        # Build names list with prefixes
-        names = [] of String
+        names_line = IO::Memory.new
+        names_in_chunk = 0
         channel.members.each do |member_nick, modes|
           # Skip empty nicknames
           if member_nick.empty?
@@ -593,23 +836,32 @@ module Circed
             next
           end
 
-          prefix = ""
-          prefix += "@" if modes.includes?('o') # Operator
-          prefix += "%" if modes.includes?('h') # Halfop
-          prefix += "+" if modes.includes?('v') # Voice
-          names << "#{prefix}#{member_nick}"
+          names_line << ' ' unless names_in_chunk == 0
+          if modes.includes?('o')
+            names_line << '@'
+          elsif modes.includes?('h')
+            names_line << '%'
+          elsif modes.includes?('v')
+            names_line << '+'
+          end
+          names_line << member_nick
+          names_in_chunk += 1
+
+          if names_in_chunk == 10
+            send_names_chunk(client, nickname, channel.name, names_line)
+            names_line = IO::Memory.new
+            names_in_chunk = 0
+          end
         end
 
-        Log.debug { "Sending NAMES for #{channel.name}: #{names.inspect}" }
-
-        # Send names in chunks (IRC has line length limits)
-        names.each_slice(10) do |name_chunk|
-          names_line = name_chunk.join(" ")
-          client.send_message(Server.clean_name, Numerics::RPL_NAMREPLY, nickname, "=", channel.name, ":#{names_line}")
-        end
+        send_names_chunk(client, nickname, channel.name, names_line) if names_in_chunk > 0
 
         # Send end of names
         client.send_message(Server.clean_name, Numerics::RPL_ENDOFNAMES, nickname, channel.name, ":End of /NAMES list")
+      end
+
+      private def send_names_chunk(client : Client, nickname : String, channel_name : String, names_line : IO::Memory)
+        client.send_message(Server.clean_name, Numerics::RPL_NAMREPLY, nickname, "=", channel_name, ":#{names_line}")
       end
     end
   end

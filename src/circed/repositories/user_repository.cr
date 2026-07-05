@@ -7,17 +7,17 @@ module Circed
       @@users = Hash(String, Domain::User).new
       @@clients = Hash(String, Client).new # Maps nickname to local client connection
 
-      def add(nickname : String, user : Domain::User) : Void
-        @@users[nickname] = user
+      def add(id : String, entity : Domain::User) : Void
+        @@users[id] = entity
       end
 
-      def get(nickname : String) : Domain::User?
-        @@users[nickname]?
+      def get(id : String) : Domain::User?
+        @@users[id]?
       end
 
-      def remove(nickname : String) : Bool
-        removed = @@users.delete(nickname)
-        @@clients.delete(nickname)
+      def remove(id : String) : Bool
+        removed = @@users.delete(id)
+        @@clients.delete(id)
         !removed.nil?
       end
 
@@ -72,6 +72,12 @@ module Circed
         @@clients.has_key?(nickname)
       end
 
+      def each_client(& : Client ->) : Nil
+        @@clients.each_value do |client|
+          yield client
+        end
+      end
+
       def change_nickname(old_nickname : String, new_nickname : String) : Bool
         user = @@users[old_nickname]?
         return false unless user
@@ -121,56 +127,38 @@ module Circed
 
       # User state management
       def join_channel(nickname : String, channel_name : String) : Bool
-        if user = get(nickname)
+        update_user(nickname) do |user|
           user.channels << channel_name
-          true
-        else
-          false
         end
       end
 
       def part_channel(nickname : String, channel_name : String) : Bool
-        if user = get(nickname)
+        update_user(nickname) do |user|
           user.channels.delete(channel_name)
-          true
-        else
-          false
         end
       end
 
       def set_away(nickname : String, message : String?) : Bool
-        if user = get(nickname)
+        update_user(nickname) do |user|
           user.away_message = message
-          true
-        else
-          false
         end
       end
 
       def add_mode(nickname : String, mode : Char) : Bool
-        if user = get(nickname)
+        update_user(nickname) do |user|
           user.modes << mode
-          true
-        else
-          false
         end
       end
 
       def remove_mode(nickname : String, mode : Char) : Bool
-        if user = get(nickname)
+        update_user(nickname) do |user|
           user.modes.delete(mode)
-          true
-        else
-          false
         end
       end
 
       def update_activity(nickname : String) : Bool
-        if user = get(nickname)
+        update_user(nickname) do |user|
           user.update_activity
-          true
-        else
-          false
         end
       end
 
@@ -182,6 +170,13 @@ module Circed
           remote: remote_user_count,
           away:   @@users.values.count(&.is_away?),
         }
+      end
+
+      private def update_user(nickname : String, & : Domain::User ->) : Bool
+        return false unless user = get(nickname)
+
+        yield user
+        true
       end
     end
   end

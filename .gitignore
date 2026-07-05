@@ -3,3 +3,13 @@
 /bin/
 /.shards/
 *.dwarf
+.DS_Store
+/circed
+/circed_test
+config_*.yml
+server*.log
+spec/logs/
+spec/fixtures/*.yml
+spec/fixtures/ssl/
+ssl/
+tmp/

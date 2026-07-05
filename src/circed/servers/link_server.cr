@@ -1,33 +1,87 @@
 require "../mixins/unified_messaging"
+require "../network/ssl_socket"
 
 module Circed
   class LinkServer
     include UnifiedMessaging
 
+    OUTBOUND_QUEUE_CAPACITY = 4096
+    OUTBOUND_BATCH_MESSAGES =  128
+    OUTBOUND_BATCH_BYTES    = 256 * 1024
+
     getter name : String
     getter target_host : String
     getter target_port : Int32
 
-    getter socket : IPSocket? = nil
+    getter socket : Network::SSLSocket::IRCSocket? = nil
 
     @pingpong : Pingpong?
 
     @buffer = [] of String
+    @disconnected : Bool = false
+    @outbound_messages : ::Channel(String) = ::Channel(String).new(OUTBOUND_QUEUE_CAPACITY)
+    @direct_writes : Bool = ENV["CIRCED_TEST"]? == "true"
+    @socket_write_mutex : Mutex = Mutex.new
 
-    def initialize(@name : String, @target_host : String, @target_port : Int32, password : String)
-      @socket = TCPSocket.new(@target_host, @target_port)
+    def initialize(@name : String, @target_host : String, @target_port : Int32, password : String, use_ssl : Bool = false, verify_ssl : Bool = false)
+      # Create TCP connection
+      tcp_socket = TCPSocket.new(@target_host, @target_port)
+
+      # Wrap with SSL if needed
+      @socket = if use_ssl
+                  begin
+                    # Create a minimal SSL config for client connections
+                    ssl_yaml = <<-YAML
+        enabled: true
+        verify_mode: #{verify_ssl}
+        YAML
+                    ssl_config = Config::SSLConfig.from_yaml(ssl_yaml)
+
+                    # Set connection timeout
+                    tcp_socket.read_timeout = 15.seconds
+                    tcp_socket.write_timeout = 15.seconds
+
+                    context = Network::SSLSocket.create_client_context(ssl_config)
+                    ssl_socket = Network::SSLSocket.wrap_client_socket(tcp_socket, context, @target_host)
+
+                    if peer_info = Network::SSLSocket.get_peer_info(ssl_socket)
+                      Log.info { "Established SSL connection to #{@target_host}:#{@target_port} (#{peer_info})" }
+                    else
+                      Log.info { "Established SSL connection to #{@target_host}:#{@target_port}" }
+                    end
+
+                    ssl_socket
+                  rescue ex : OpenSSL::SSL::Error
+                    Log.error { "SSL connection failed to #{@target_host}:#{@target_port}: #{ex.message}" }
+                    tcp_socket.close
+                    raise ex
+                  rescue ex : IO::TimeoutError
+                    Log.error { "SSL connection timed out to #{@target_host}:#{@target_port}" }
+                    tcp_socket.close
+                    raise "SSL connection timeout"
+                  rescue ex
+                    Log.error { "Failed to establish SSL connection to #{@target_host}:#{@target_port}: #{ex.message}" }
+                    tcp_socket.close
+                    raise ex
+                  end
+                else
+                  tcp_socket
+                end
+
+      start_outbound_writer unless @direct_writes
       handshake(password)
+      setup([@name])
       listen
     end
 
-    def initialize(socket, buffer)
+    def initialize(socket : Network::SSLSocket::IRCSocket, buffer, remote_addr : Socket::IPAddress)
       @socket = socket
       @buffer = buffer
-      remote_addr = socket.remote_address
       @target_host = remote_addr.address
       @target_port = remote_addr.port
       @name = "" # Will be set during authentication
 
+      start_outbound_writer unless @direct_writes
       authenticate_incoming_server
       listen
     end
@@ -118,26 +172,36 @@ module Circed
     def listen : Nil
       return unless socket_ref = socket
 
-      until socket_ref.closed?
-        FastIRC.parse(socket_ref) do |payload|
-          dispatch_command(payload)
-        end
+      begin
+        until socket_ref.closed?
+          FastIRC.parse(socket_ref) do |payload|
+            dispatch_command(payload)
+          end
 
-        if closed?
-          Log.info { "Server connection closed: #{@name}" }
-          handle_disconnect("Connection lost")
-          break
+          if closed?
+            Log.info { "Server connection closed: #{@name}" }
+            handle_disconnect("Connection lost")
+            break
+          end
         end
+      rescue ex : IO::Error | OpenSSL::SSL::Error
+        Log.warn { "Server connection lost for #{@name}: #{ex.message}" }
+        handle_disconnect("Connection lost")
+      rescue ex
+        Log.error { "Server link #{@name} failed: #{ex.message}" }
+        handle_disconnect("Connection error")
       end
     end
 
     private def dispatch_command(payload)
+      Performance::Metrics.increment_command(payload.command)
+
       case payload.command
       when "ERROR", "PING", "PONG"
         handle_connection_commands(payload)
       when "SERVER", "SQUIT"
         handle_server_commands(payload)
-      when "PRIVMSG", "TOPIC", "AWAY"
+      when "PRIVMSG", "NOTICE", "TOPIC", "AWAY"
         handle_messaging_commands(payload)
       when "JOIN", "PART", "QUIT", "NICK", "MODE"
         handle_user_state_change(payload)
@@ -172,8 +236,8 @@ module Circed
 
     private def handle_messaging_commands(payload)
       case payload.command
-      when "PRIVMSG"
-        forward_message_to_peers(payload)
+      when "PRIVMSG", "NOTICE"
+        handle_message_delivery(payload)
       when "TOPIC"
         handle_topic_change(payload)
       when "AWAY"
@@ -210,6 +274,22 @@ module Circed
     end
 
     def handle_user_state_change(payload)
+      user_introduction = user_introduction?(payload)
+
+      if payload.command == "NICK" && !user_introduction
+        deliver_state_change_to_local_users(payload)
+        handle_nick_change(payload)
+        forward_message_to_peers(payload)
+        return
+      end
+
+      if payload.command == "QUIT"
+        deliver_state_change_to_local_users(payload)
+        handle_quit_message(payload)
+        forward_message_to_peers(payload)
+        return
+      end
+
       case payload.command
       when "NICK"
         handle_nick_change(payload)
@@ -225,11 +305,16 @@ module Circed
 
       # Forward to other servers and local clients
       forward_message_to_peers(payload)
-      deliver_state_change_to_local_users(payload)
+      deliver_state_change_to_local_users(payload) unless user_introduction
     end
 
     def handle_nick_change(payload)
       return if payload.params.empty?
+
+      if user_introduction?(payload)
+        handle_user_introduction(payload)
+        return
+      end
 
       old_nick = extract_nickname(payload)
       new_nick = payload.params[0]
@@ -248,7 +333,34 @@ module Circed
         end
       end
 
+      Infrastructure::ServiceLocator.channel_repository.rename_member(old_nick, new_nick)
+
       Log.debug { "Nick change: #{old_nick} -> #{new_nick}" }
+    end
+
+    private def handle_user_introduction(payload)
+      return if payload.params.size < 7
+
+      nickname = payload.params[0]
+      hopcount = payload.params[1].to_i? || 1
+      username = payload.params[2]
+      hostname = payload.params[3]
+      modes = payload.params[5]
+      realname = payload.params[6..]?.try(&.join(" ")) || ""
+      realname = realname.lstrip(':')
+
+      Network::NetworkState.add_user(nickname, username, hostname, realname, @name, hopcount)
+
+      if modes.starts_with?('+')
+        user = Network::NetworkState.get_user(nickname)
+        modes[1..].each_char { |mode| user.try(&.modes.<<(mode)) }
+      end
+
+      Log.debug { "Introduced remote user #{nickname} from #{@name}" }
+    end
+
+    private def user_introduction?(payload) : Bool
+      payload.command == "NICK" && payload.prefix.nil? && payload.params.size >= 7
     end
 
     def handle_join_message(payload)
@@ -258,6 +370,9 @@ module Circed
       channel_name = payload.params[0]
 
       Network::NetworkState.join_user_to_channel(nickname, channel_name)
+      channel_repository = Infrastructure::ServiceLocator.channel_repository
+      channel = channel_repository.create_channel(channel_name)
+      channel_repository.add_member(channel.name, nickname) unless channel.has_member?(nickname)
       Log.debug { "User #{nickname} joined #{channel_name}" }
     end
 
@@ -268,6 +383,7 @@ module Circed
       channel_name = payload.params[0]
 
       Network::NetworkState.part_user_from_channel(nickname, channel_name)
+      Infrastructure::ServiceLocator.channel_repository.part_user(channel_name, nickname)
       Log.debug { "User #{nickname} parted #{channel_name}" }
     end
 
@@ -275,6 +391,7 @@ module Circed
       nickname = extract_nickname(payload)
 
       Network::NetworkState.remove_user(nickname)
+      Infrastructure::ServiceLocator.channel_repository.remove_user_from_all_channels(nickname)
       Log.debug { "User #{nickname} quit" }
     end
 
@@ -389,7 +506,31 @@ module Circed
       socket.try(&.closed?) || false
     end
 
-    # Use UnifiedMessaging methods - these are now consolidated
+    def safe_send(message : String) : Bool
+      return false if closed?
+
+      line = String.build(capacity: message.bytesize + 2) do |io|
+        io << message << "\r\n"
+      end
+
+      return write_to_socket(line) if @direct_writes
+      return false if @outbound_messages.closed?
+
+      select
+      when @outbound_messages.send(line)
+        Performance::Metrics.increment_messages
+        true
+      else
+        close("Server link outbound queue full")
+        false
+      end
+    rescue Channel::ClosedError
+      false
+    end
+
+    def send_message(message : String)
+      safe_send(message)
+    end
 
     def close(reason : String = "Closing connection")
       Log.info { "Closing server connection to #{@name}: #{reason}" }
@@ -398,10 +539,13 @@ module Circed
       # Send SQUIT and handle network cleanup
       handle_disconnect(reason)
 
+      close_outbound_queue
       socket.try(&.close)
     end
 
     private def handle_disconnect(reason : String)
+      return if @disconnected
+      @disconnected = true
       return if @name.empty?
 
       # Send SQUIT to notify other servers about the disconnect
@@ -429,6 +573,63 @@ module Circed
       @pingpong.try(&.stop_pong_check)
     end
 
+    private def start_outbound_writer : Nil
+      spawn do
+        outbound_writer_loop
+      end
+    end
+
+    private def outbound_writer_loop : Nil
+      while first_message = @outbound_messages.receive?
+        batch = build_outbound_batch(first_message)
+        break unless write_to_socket(batch)
+      end
+    ensure
+      close_outbound_queue
+    end
+
+    private def build_outbound_batch(first_message : String) : String
+      message_count = 1
+      byte_count = first_message.bytesize
+
+      String.build(capacity: first_message.bytesize) do |io|
+        io << first_message
+
+        loop do
+          break if message_count >= OUTBOUND_BATCH_MESSAGES || byte_count >= OUTBOUND_BATCH_BYTES
+
+          select
+          when next_message = @outbound_messages.receive?
+            break unless next_message
+            io << next_message
+            message_count += 1
+            byte_count += next_message.bytesize
+          else
+            break
+          end
+        end
+      end
+    end
+
+    private def write_to_socket(message : String) : Bool
+      return false unless socket_ref = socket
+
+      @socket_write_mutex.synchronize do
+        socket_ref.write(message.to_slice)
+        socket_ref.flush
+      end
+      true
+    rescue ex : IO::Error | IO::TimeoutError | OpenSSL::SSL::Error
+      Log.debug(exception: ex) { "Closing server link after write failure" }
+      handle_disconnect("Write failure")
+      socket.try(&.close)
+      false
+    end
+
+    private def close_outbound_queue : Nil
+      @outbound_messages.close unless @outbound_messages.closed?
+    end
+
     def handle_message(message)
       return if closed?
       send_message(message)
@@ -439,8 +640,8 @@ module Circed
       close
     end
 
-    def handle_privmsg(payload)
-      # Forward PRIVMSG to all other connected servers except the sender
+    def handle_message_delivery(payload)
+      # Forward message to all other connected servers except the sender
       forward_message_to_peers(payload)
 
       # Forward to local clients if the target is a local user/channel
@@ -477,7 +678,7 @@ module Circed
             # Don't send message back to the sender if they're local
             next if local_nick == sender_nick
 
-            formatted_message = format_privmsg_for_client(payload, message)
+            formatted_message = format_message_for_client(payload, message)
             client.send_message(formatted_message)
           end
         end
@@ -487,22 +688,22 @@ module Circed
     private def deliver_to_local_user(target_nick : String, payload, sender_nick : String, message : String)
       user_repository = Infrastructure::ServiceLocator.user_repository
       if client = user_repository.get_client(target_nick)
-        formatted_message = format_privmsg_for_client(payload, message)
+        formatted_message = format_message_for_client(payload, message)
         client.send_message(formatted_message)
       end
     end
 
-    private def format_privmsg_for_client(payload, message : String) : String
-      # Format: ":sender!user@host PRIVMSG target :message"
+    private def format_message_for_client(payload, message : String) : String
+      # Format: ":sender!user@host COMMAND target :message"
       sender_nick = extract_nickname(payload)
       target = payload.params[0]
 
       if user_info = Network::NetworkState.get_user(sender_nick)
         hostmask = "#{sender_nick}!#{user_info.username}@#{user_info.hostname}"
-        ":#{hostmask} PRIVMSG #{target} :#{message}"
+        ":#{hostmask} #{payload.command} #{target} :#{message}"
       else
         # Fallback if user info not available
-        ":#{sender_nick}!unknown@unknown PRIVMSG #{target} :#{message}"
+        ":#{sender_nick}!unknown@unknown #{payload.command} #{target} :#{message}"
       end
     end
 
@@ -579,10 +780,26 @@ module Circed
 
       if user_info = Network::NetworkState.get_user(sender_nick)
         hostmask = "#{sender_nick}!#{user_info.username}@#{user_info.hostname}"
-        ":#{hostmask} #{payload.command} #{payload.params.join(" ")}"
+        ":#{hostmask} #{payload.command}#{format_params(payload.params)}"
       else
         # Fallback
-        ":#{sender_nick}!unknown@unknown #{payload.command} #{payload.params.join(" ")}"
+        ":#{sender_nick}!unknown@unknown #{payload.command}#{format_params(payload.params)}"
+      end
+    end
+
+    private def format_params(params : Array(String)) : String
+      return "" if params.empty?
+
+      String.build do |io|
+        params.each_with_index do |param, index|
+          io << ' '
+          if index == params.size - 1 && (param.empty? || param.includes?(' ') || param.starts_with?(':'))
+            io << ':'
+            io << param.lstrip(':')
+          else
+            io << param
+          end
+        end
       end
     end
 

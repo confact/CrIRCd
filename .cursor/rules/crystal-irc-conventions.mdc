@@ -1,0 +1,213 @@
+---
+alwaysApply: true
+description: "Crystal IRC server development conventions and architecture patterns"
+---
+
+# Crystal IRC Server Development Guide
+
+You are an expert in Crystal programming language, IRC protocol implementation, and server architecture.
+
+## Project Architecture
+
+This is a Crystal-based IRC server following clean architecture principles with these layers:
+
+### Core Architecture Layers
+- **Domain Layer**: Core business entities in [src/circed/domain/entities.cr](mdc:src/circed/domain/entities.cr)
+- **Repository Layer**: Data access abstractions in [src/circed/repositories/](mdc:src/circed/repositories/)
+- **Service Layer**: Business logic in [src/circed/services/](mdc:src/circed/services/)
+- **Action Layer**: IRC command handlers in [src/circed/actions/](mdc:src/circed/actions/)
+- **Infrastructure Layer**: DI container in [src/circed/infrastructure/](mdc:src/circed/infrastructure/)
+
+### Key Components
+- **Server**: Main server class in [src/circed/server.cr](mdc:src/circed/server.cr)
+- **Client**: User connection handling in [src/circed/clients/client.cr](mdc:src/circed/clients/client.cr)
+- **LinkServer**: Server-to-server connections in [src/circed/servers/link_server.cr](mdc:src/circed/servers/link_server.cr)
+- **NetworkState**: Global network state in [src/circed/network/network_state.cr](mdc:src/circed/network/network_state.cr)
+
+## Crystal Language Conventions
+
+### Naming Conventions
+- **Classes/Modules**: PascalCase (`IRCService`, `UserRepository`, `LinkServer`)
+- **Methods/Variables**: snake_case (`join_channel`, `update_nickname`, `has_member?`)
+- **Files/Directories**: snake_case (`user_repository.cr`, `authentication_service.cr`)
+- **Constants**: SCREAMING_SNAKE_CASE (`ERR_NICKNAMEINUSE`, `RPL_WELCOME`)
+
+### Method Patterns
+- **Predicate methods**: Use `?` suffix (`empty?`, `local?`, `away?`, `banned?`)
+- **Mutating methods**: Use descriptive names (`add_member`, `remove_member`, `update_topic`)
+- **Property setters**: Use Crystal property syntax (`property nickname : String`)
+
+### Error Handling
+- Use Crystal's built-in exception handling with `begin/rescue/end`
+- Create custom exception classes when needed
+- Always log errors with appropriate context
+
+## IRC Protocol Implementation
+
+### Message Handling
+- Use FastIRC library for parsing: `FastIRC.parse_line(message)`
+- All IRC commands should extend `ActionHelper` mixin
+- Follow RFC 1459 and RFC 2813 specifications
+
+### Command Structure
+```crystal
+module Circed
+  class Actions::CommandName
+    extend Circed::ActionHelper
+    
+    def self.call(sender, *params)
+      # Implementation
+    end
+  end
+end
+```
+
+### Numerics
+- Use constants from [src/circed/numerics.cr](mdc:src/circed/numerics.cr)
+- Follow IRC numeric response codes (RPL_*, ERR_*)
+
+## Repository Pattern
+
+### Repository Interface
+All repositories implement `Core::Repository(T)` interface:
+- `add(id : String, entity : T) : Void`
+- `get(id : String) : T?`
+- `remove(id : String) : Bool`
+- `all : Array(T)`
+- `clear : Void`
+
+### Service Locator
+Access repositories through dependency injection:
+```crystal
+user_repository = Infrastructure::ServiceLocator.user_repository
+channel_repository = Infrastructure::ServiceLocator.channel_repository
+```
+
+## Testing Conventions
+
+### Test Structure
+- Test files end with `_spec.cr`
+- Use `describe` and `it` blocks for organization
+- Include `clear_repositories` in `before_each` and `after_each`
+
+### Test Helpers
+- Use `create_test_client(nickname)` for client creation
+- Use `create_test_channel(name)` for channel creation
+- Access repositories through `user_repository` and `channel_repository` helpers
+
+### Test Example
+```crystal
+describe Circed::Actions::CommandName do
+  before_each do
+    clear_repositories
+  end
+
+  after_each do
+    clear_repositories
+  end
+
+  it "performs expected action" do
+    client = create_test_client("test_user")
+    # Test implementation
+  end
+end
+```
+
+## Domain Entities
+
+### User Entity
+Located in [src/circed/domain/entities.cr](mdc:src/circed/domain/entities.cr):
+- Properties: `nickname`, `username`, `hostname`, `realname`, `servername`
+- Methods: `hostmask`, `local?`, `away?`
+
+### Channel Entity
+- Properties: `name`, `topic`, `members`, `modes`, `ban_list`, `invite_list`
+- Methods: `has_member?`, `add_member`, `remove_member`, `empty?`, `banned?`
+
+### Server Entity
+- Properties: `name`, `hostname`, `description`, `hopcount`
+- Methods: `local?`
+
+## Network State Management
+
+### Global State
+- Use `NetworkState` class for network-wide information
+- Maintain server topology and user distribution
+- Handle netsplits and server connections
+
+### State Operations
+- `NetworkState.add_server(name, hopcount, description)`
+- `NetworkState.add_user(nickname, username, hostname, realname, server)`
+- `NetworkState.join_user_to_channel(nickname, channel_name)`
+
+## Configuration
+
+### Config Structure
+Configuration is loaded from `config.yml`:
+- Server settings: `host`, `port`, `network`
+- Authentication: `link_password`, `server_password`
+- Linked servers: `linked_servers` array
+
+### Access Pattern
+```crystal
+Server.config.host
+Server.config.port
+Server.config.linked_servers
+```
+
+## Code Quality Guidelines
+
+### Crystal Idioms
+- Use `getter`, `setter`, `property` for attribute access
+- Prefer `unless` over `if !condition`
+- Use `try` for safe navigation
+- Utilize Crystal's type inference
+
+### Error Messages
+- Use IRC numeric codes for client errors
+- Include descriptive error messages
+- Log all errors with context
+
+### Performance
+- Use class variables (`@@`) for shared state
+- Implement efficient data structures (Hash, Set)
+- Consider memory usage in long-running server processes
+
+## Server-to-Server Protocol
+
+### Link Server Implementation
+- Handle server authentication via PASS/SERVER commands
+- Implement burst protocol for initial state synchronization
+- Forward messages between servers appropriately
+
+### Message Routing
+- Use network topology for message routing
+- Handle netsplits gracefully
+- Maintain consistent state across the network
+
+## Security Considerations
+
+### Authentication
+- Validate all user inputs
+- Implement rate limiting for commands
+- Use secure password handling
+
+### Authorization
+- Check user permissions for channel operations
+- Validate operator privileges
+- Implement proper access controls
+
+## Debugging and Logging
+
+### Logging Pattern
+```crystal
+Log.info { "Important information" }
+Log.debug { "Debug information" }
+Log.warn { "Warning message" }
+Log.error(exception: ex) { "Error context" }
+```
+
+### Debug Output
+- Use structured logging with context
+- Include relevant identifiers (nicknames, channels, servers)
+- Log state changes and important events

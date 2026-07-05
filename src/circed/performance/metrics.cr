@@ -9,6 +9,8 @@ module Circed
       @@server_connections = Atomic(UInt32).new(0_u32)
       @@channel_operations = Atomic(UInt64).new(0_u64)
       @@memory_allocations = Atomic(UInt64).new(0_u64)
+      @@command_counts = Hash(String, UInt64).new(0_u64)
+      @@command_counts_mutex = Mutex.new
 
       # Timing measurements
       @@burst_times = [] of Time::Span
@@ -47,6 +49,19 @@ module Circed
 
       def self.increment_channel_operations
         @@channel_operations.add(1_u64)
+      end
+
+      def self.increment_command(command : String)
+        normalized_command = command.upcase
+        @@command_counts_mutex.synchronize do
+          @@command_counts[normalized_command] += 1_u64
+        end
+      end
+
+      def self.command_counts : Hash(String, UInt64)
+        @@command_counts_mutex.synchronize do
+          @@command_counts.dup
+        end
       end
 
       # Time a block execution and categorize by operation type
@@ -117,6 +132,9 @@ module Circed
         @@server_connections.set(0_u32)
         @@channel_operations.set(0_u64)
         @@memory_allocations.set(0_u64)
+        @@command_counts_mutex.synchronize do
+          @@command_counts.clear
+        end
         @@burst_times.clear
         @@message_processing_times.clear
         @@netsplit_times.clear
