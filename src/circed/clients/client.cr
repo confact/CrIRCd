@@ -100,7 +100,7 @@ module Circed
 
       # Create domain user in repository if we have a nickname
       if nickname = @nickname
-        register_domain_user(nickname, username, realname)
+        register_domain_user(nickname, username, realname, mode)
       end
 
       complete_registration
@@ -274,7 +274,7 @@ module Circed
         handle_channel_commands(payload)
       when "QUIT", "NOTICE", "PRIVMSG"
         handle_message_commands(payload)
-      when "KILL", "REHASH", "RESTART", "DIE", "CONNECT", "SQUIT", "WALLOPS"
+      when "KILL", "REHASH", "RESTART", "DIE", "CONNECT", "SQUIT"
         handle_operator_commands(payload)
       else
         # Unknown command
@@ -487,10 +487,6 @@ module Circed
         return unless require_param_count(payload, 2, "SQUIT")
 
         irc_service.squit_server(self, payload.params.first, joined_params(payload.params, 1).lchop(':'))
-      when "WALLOPS"
-        return unless require_param_count(payload, 1, "WALLOPS")
-
-        irc_service.wallops(self, joined_params(payload.params).lchop(':'))
       end
     end
 
@@ -711,7 +707,7 @@ module Circed
       Log.debug { "Socket is closed, can't send message" }
     end
 
-    private def register_domain_user(nickname : String, username : String, realname : String)
+    private def register_domain_user(nickname : String, username : String, realname : String, user_mode : String)
       hostname = get_hostname || @host || "localhost"
       domain_user = Domain::User.new(
         nickname,
@@ -720,8 +716,15 @@ module Circed
         realname,
         Server.name
       )
+      apply_registration_user_modes(domain_user, user_mode)
       Infrastructure::ServiceLocator.user_repository.add(nickname, domain_user)
       set_hostmask
+    end
+
+    private def apply_registration_user_modes(domain_user : Domain::User, user_mode : String) : Nil
+      mode_value = user_mode.to_i? || 0
+      domain_user.modes << 'w' if (mode_value & 4) != 0
+      domain_user.modes << 'i' if (mode_value & 8) != 0
     end
   end
 end

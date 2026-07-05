@@ -105,7 +105,7 @@ module Circed
           validate_user_command_params(command, params)
         when "JOIN", "PART", "TOPIC"
           validate_channel_command_params(command, params)
-        when "PRIVMSG", "NOTICE", "KICK", "INVITE", "KILL", "CONNECT", "SQUIT", "WALLOPS"
+        when "PRIVMSG", "NOTICE", "KICK", "INVITE", "KILL", "CONNECT", "SQUIT"
           validate_messaging_command_params(command, params)
         when "MODE", "WHOIS", "QUIT", "AWAY", "NAMES", "WHO"
           validate_misc_command_params(command, params)
@@ -146,8 +146,6 @@ module Circed
           params.size >= 1 && params.size <= 3
         when "SQUIT"
           params.size >= 2
-        when "WALLOPS"
-          params.size >= 1
         else
           true
         end

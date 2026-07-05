@@ -17,11 +17,13 @@ module Circed
     @@ssl_server : TCPServer? = nil
     INITIAL_LINK_RETRY_DELAY = 1.second
     MAX_LINK_RETRY_DELAY     = 30.seconds
+    SUPPORTED_USER_MODES     = "iwoO"
+    SUPPORTED_CHANNEL_MODES  = "biklmnopsthv"
     CLIENT_COMMANDS          = {
       "NICK", "USER", "CAP", "JOIN", "PART", "MODE", "KICK",
       "TOPIC", "INVITE", "LIST", "WHOIS", "WHO", "NAMES", "AWAY",
       "STARTTLS", "QUIT", "NOTICE", "PRIVMSG", "OPER", "KILL",
-      "REHASH", "RESTART", "DIE", "CONNECT", "SQUIT", "WALLOPS",
+      "REHASH", "RESTART", "DIE", "CONNECT", "SQUIT",
     }
 
     def self.start_time
@@ -275,7 +277,7 @@ module Circed
       when "NICK", "USER", "CAP", "JOIN", "PART", "MODE", "KICK",
            "TOPIC", "INVITE", "LIST", "WHOIS", "WHO", "NAMES", "AWAY",
            "STARTTLS", "QUIT", "NOTICE", "PRIVMSG", "OPER", "KILL",
-           "REHASH", "RESTART", "DIE", "CONNECT", "SQUIT", "WALLOPS"
+           "REHASH", "RESTART", "DIE", "CONNECT", "SQUIT"
         true
       else
         false
@@ -386,7 +388,7 @@ module Circed
       client.send_message(Server.clean_name, Numerics::RPL_WELCOME, client.nickname, ":Welcome to the #{Server.config.network} IRC Network, #{client.nickname}!")
       client.send_message(Server.clean_name, Numerics::RPL_YOURHOST, client.nickname, ":Your host is #{Server.config.host}, running version #{VERSION}")
       client.send_message(Server.clean_name, Numerics::RPL_CREATED, client.nickname, ":This server was created on #{Server.start_time}")
-      client.send_message(Server.clean_name, Numerics::RPL_MYINFO, client.nickname, "#{Server.config.host} #{VERSION} oiwszcrkfydnxbauglZCD biklmnopstvrDdRcC bkloveqjfI")
+      client.send_message(Server.clean_name, Numerics::RPL_MYINFO, client.nickname, Server.name, VERSION, SUPPORTED_USER_MODES, SUPPORTED_CHANNEL_MODES)
     end
 
     def self.lusers(client : Client)
@@ -395,11 +397,16 @@ module Circed
       channel_repo = Infrastructure::ServiceLocator.channel_repository
 
       data = ""
-      data += Format.format_server_message(name, Numerics::RPL_LUSERCLIENT, nick, ":There are #{user_repo.count} users and 0 invisible on 1 server(s)")
-      data += Format.format_server_message(name, Numerics::RPL_LUSEROP, nick, ":1 IRC Operators online")
+      users = user_repo.all
+      invisible_count = users.count(&.modes.includes?('i'))
+      visible_count = user_repo.count - invisible_count
+      operator_count = users.count { |user| user.modes.includes?('o') || user.modes.includes?('O') }
+      server_count = Network::NetworkState.stats[:servers] + 1
+      data += Format.format_server_message(name, Numerics::RPL_LUSERCLIENT, nick, ":There are #{visible_count} users and #{invisible_count} invisible on #{server_count} server(s)")
+      data += Format.format_server_message(name, Numerics::RPL_LUSEROP, nick, ":#{operator_count} IRC Operators online")
       data += Format.format_server_message(name, Numerics::RPL_LUSERUNKNOWN, nick, ":0 unregistered connections")
       data += Format.format_server_message(name, Numerics::RPL_LUSERCHANNELS, nick, ":#{channel_repo.count} channels formed")
-      data += Format.format_server_message(name, Numerics::RPL_LUSERME, nick, ":I have #{user_repo.count} clients and 1 servers")
+      data += Format.format_server_message(name, Numerics::RPL_LUSERME, nick, ":I have #{user_repo.count} clients and #{server_count} servers")
       data += Format.format_server_message(name, Numerics::RPL_LOCALUSERS, nick, user_repo.count, config.max_users, ":Current local users #{user_repo.count}, max #{config.max_users}")
       data += Format.format_server_message(name, Numerics::RPL_GLOBALUSERS, nick, user_repo.count, config.max_users, ":Current global users #{user_repo.count}, max #{config.max_users}")
       data

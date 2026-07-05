@@ -354,14 +354,13 @@ module Circed
         if remote_server && remote_server != Server.name
           return false unless require_global_irc_operator(client)
 
-          if server = find_server_by_name(remote_server)
+          if target_server = find_network_server_name(remote_server)
             message = String.build do |io|
               io << "CONNECT " << host
               io << ' ' << port if port
-              io << ' ' << remote_server
+              io << ' ' << target_server
             end
-            server.safe_send(message)
-            return true
+            return true if send_to_server_route(target_server, message)
           end
 
           client.send_message(Server.clean_name, Numerics::ERR_NOSUCHSERVER, nickname, remote_server, ":No such server")
@@ -380,15 +379,20 @@ module Circed
         return false unless require_irc_operator(client)
         return false unless nickname = client.nickname
 
-        server = find_server_by_name(server_name)
-        unless server
-          client.send_message(Server.clean_name, Numerics::ERR_NOSUCHSERVER, nickname, server_name, ":No such server")
-          return false
+        if server = find_server_by_name(server_name)
+          server.safe_send("SQUIT #{server_name} :#{comment}")
+          server.close("Operator SQUIT: #{comment}")
+          return true
         end
 
-        server.safe_send("SQUIT #{server_name} :#{comment}")
-        server.close("Operator SQUIT: #{comment}")
-        true
+        return false unless require_global_irc_operator(client)
+
+        if target_server = find_network_server_name(server_name)
+          return true if send_to_server_route(target_server, "SQUIT #{target_server} :#{comment}")
+        end
+
+        client.send_message(Server.clean_name, Numerics::ERR_NOSUCHSERVER, nickname, server_name, ":No such server")
+        false
       end
 
       def die(client : Client, reason : String) : Bool
@@ -414,16 +418,6 @@ module Circed
         end
 
         spawn { Server.restart_by_operator(reason) }
-        true
-      end
-
-      def wallops(client : Client, message : String) : Bool
-        return false unless require_irc_operator(client)
-        return false unless nickname = client.nickname
-
-        wallops_message = ":#{Server.name} WALLOPS :#{message}"
-        send_wallops_to_local_users(wallops_message)
-        propagate_to_network(wallops_message) if global_irc_operator?(nickname)
         true
       end
 
@@ -792,22 +786,34 @@ module Circed
         end
       end
 
+      private def find_network_server_name(server_mask : String) : String?
+        return Server.name if server_mask == Server.name
+        if server = find_server_by_name(server_mask)
+          return server.name
+        end
+        return server_mask if Network::NetworkState.get_server(server_mask)
+
+        Network::NetworkState.server_list(server_mask).first?.try(&.name)
+      end
+
+      private def send_to_server_route(target_server : String, message : String) : LinkServer?
+        server = find_server_by_name(target_server)
+        unless server
+          if route_to_server = find_route_to_server(target_server)
+            server = find_server_by_name(route_to_server)
+          end
+        end
+        return unless server
+
+        server.safe_send(message) ? server : nil
+      end
+
       private def disconnect_killed_local_user(target_nickname : String, oper_nickname : String, reason : String) : Nil
         return unless target_client = @user_repository.get_client(target_nickname)
 
         target_client.send_error("Killed by #{oper_nickname}: #{reason}")
         target_client.close
       rescue ClosedClient
-      end
-
-      private def send_wallops_to_local_users(message : String) : Nil
-        @user_repository.each_client do |target_client|
-          next unless target_nickname = target_client.nickname
-          next unless target_user = @user_repository.get(target_nickname)
-          next unless target_user.modes.includes?('w')
-
-          target_client.send_message(message)
-        end
       end
 
       # Kick user from channel with network sync

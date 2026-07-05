@@ -20,7 +20,7 @@ A Crystal IRC server implementation that follows IRC protocol specifications. Wh
 * Activity and signon time tracking
 * IRC operator authentication with `OPER`
 * Oper-only administrative commands: `KILL`, `REHASH`, `CONNECT`, `SQUIT`,
-  `DIE`, `RESTART`, and `WALLOPS`
+  `DIE`, and `RESTART`
 
 ### Network & Security
 * **SSL/TLS Support** - Secure connections for clients and servers
@@ -68,9 +68,12 @@ local operators. Users cannot grant themselves `+o` or `+O` with `MODE`; those
 modes must come from `OPER`, though users may remove their own operator mode.
 Operators can use `KILL <nickname> :<reason>` to disconnect users, `REHASH` to
 reload config, `CONNECT` to start a configured server link, and `SQUIT` to drop
-a server link. They can also use `WALLOPS :<message>` to send a server notice to
-local users with mode `+w`. `DIE` and `RESTART` are disabled by default and
-require `allow_die: true` or `allow_restart: true`.
+a server link. `DIE` and `RESTART` are disabled by default and require
+`allow_die: true` or `allow_restart: true`.
+
+Users can set `MODE <nick> +w` to receive wallops notices from linked servers.
+CrIRCd treats `WALLOPS` as a server-originated command and does not expose it as
+a client operator command.
 
 ```yaml
 operators:
@@ -194,7 +197,7 @@ CrIRCd currently supports these client-facing commands:
 * Channels: `JOIN`, `PART`, `MODE`, `TOPIC`, `INVITE`, `KICK`, `NAMES`, `LIST`,
   `WHO`
 * Operator commands: `OPER`, `KILL`, `REHASH`, `CONNECT`, `SQUIT`, `DIE`,
-  `RESTART`, `WALLOPS`
+  `RESTART`
 * User/server queries: `WHOIS`, `LINKS`, `STATS`, `TIME`, `VERSION`, `ADMIN`
 
 Server-to-server links support handshake, burst, channel membership, user state,

@@ -25,16 +25,41 @@ def operator_test_config : Circed::Config
     YAML
 end
 
+class RecordingLinkServer < Circed::LinkServer
+  getter sent_messages = [] of String
+
+  def initialize(@name : String, target_host : String? = nil, @target_port : Int32 = 6667)
+    @target_host = target_host || @name
+  end
+
+  def safe_send(message : String) : Bool
+    @sent_messages << message
+    true
+  end
+
+  def close(reason : String = "Closing connection")
+    @sent_messages << "CLOSE #{reason}"
+  end
+
+  def closed? : Bool
+    false
+  end
+end
+
 describe "IRC operator support" do
   original_config = Circed::Server.config
 
   before_each do
     clear_repositories
+    Circed::Network::NetworkState.clear_all_state
+    Circed::ServerHandler.servers.clear
     Circed::Server.config = operator_test_config
   end
 
   after_each do
     clear_repositories
+    Circed::Network::NetworkState.clear_all_state
+    Circed::ServerHandler.servers.clear
     Circed::Server.config = original_config
   end
 
@@ -173,10 +198,9 @@ describe "IRC operator support" do
     service.squit_server(client, "irc.example.com", "Testing")
     service.die(client, "Testing")
     service.restart(client, "Testing")
-    service.wallops(client, "Testing")
 
     sent = client.socket.as(DummySocket).sent_data.join
-    sent.scan(/ 481 Alice /).size.should eq(6)
+    sent.scan(/ 481 Alice /).size.should eq(5)
   end
 
   it "keeps DIE and RESTART disabled unless explicitly configured" do
@@ -214,27 +238,34 @@ describe "IRC operator support" do
     oper.socket.as(DummySocket).sent_data.join.should contain(" 481 Alice :Permission Denied- You're not a global IRC operator")
   end
 
-  it "sends WALLOPS from operators to local wallops users" do
+  it "routes remote CONNECT through the next network hop" do
     oper = create_test_client("Alice")
-    wallops_user = create_test_client("Bob")
-    quiet_user = create_test_client("Carol")
     user_repository.get("Alice").try { |user| user.modes << 'o' }
-    user_repository.get("Bob").try { |user| user.modes << 'w' }
+    next_hop = RecordingLinkServer.new("hub.server")
+    Circed::ServerHandler.add_server(next_hop)
+    Circed::Network::NetworkState.add_server("hub.server", 1, "Hub server")
+    Circed::Network::NetworkState.add_server("remote.server", 2, "Remote server")
+    Circed::Network::NetworkState.add_server_link(Circed::Server.name, "hub.server")
+    Circed::Network::NetworkState.add_server_link("hub.server", "remote.server")
 
-    Circed::Infrastructure::ServiceLocator.irc_service.wallops(oper, "Server notice")
+    Circed::Infrastructure::ServiceLocator.irc_service.connect_server(oper, "leaf.example.com", 7000, "remote.server")
 
-    wallops_user.socket.as(DummySocket).sent_data.join.should contain(":localhost WALLOPS :Server notice")
-    quiet_user.socket.as(DummySocket).sent_data.join.should_not contain("WALLOPS")
+    next_hop.sent_messages.should contain("CONNECT leaf.example.com 7000 remote.server")
   end
 
-  it "allows local operators to send WALLOPS to local wallops users" do
+  it "routes remote SQUIT through the next network hop without closing it" do
     oper = create_test_client("Alice")
-    wallops_user = create_test_client("Bob")
-    user_repository.get("Alice").try { |user| user.modes << 'O' }
-    user_repository.get("Bob").try { |user| user.modes << 'w' }
+    user_repository.get("Alice").try { |user| user.modes << 'o' }
+    next_hop = RecordingLinkServer.new("hub.server")
+    Circed::ServerHandler.add_server(next_hop)
+    Circed::Network::NetworkState.add_server("hub.server", 1, "Hub server")
+    Circed::Network::NetworkState.add_server("remote.server", 2, "Remote server")
+    Circed::Network::NetworkState.add_server_link(Circed::Server.name, "hub.server")
+    Circed::Network::NetworkState.add_server_link("hub.server", "remote.server")
 
-    Circed::Infrastructure::ServiceLocator.irc_service.wallops(oper, "Local notice")
+    Circed::Infrastructure::ServiceLocator.irc_service.squit_server(oper, "remote.server", "Testing")
 
-    wallops_user.socket.as(DummySocket).sent_data.join.should contain(":localhost WALLOPS :Local notice")
+    next_hop.sent_messages.should contain("SQUIT remote.server :Testing")
+    next_hop.sent_messages.any?(&.starts_with?("CLOSE")).should be_false
   end
 end
