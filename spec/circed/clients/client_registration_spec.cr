@@ -56,9 +56,18 @@ describe Circed::Client do
       end
 
       socket.sent_data.size.should eq(1)
-      socket.sent_data.first.should contain("PING :one\nPING :two\nPING :three\n")
+      socket.sent_data.first.should contain("PING :one\r\nPING :two\r\nPING :three\r\n")
 
       client.shutdown
     end
+  end
+
+  it "terminates direct client messages with CRLF" do
+    client = create_test_client("Alice")
+    socket = client.socket.as(DummySocket)
+
+    client.send_message("PING :one")
+
+    socket.sent_data.last.should eq("PING :one\r\n")
   end
 end

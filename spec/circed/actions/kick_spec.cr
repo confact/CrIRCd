@@ -56,4 +56,22 @@ describe Circed::Actions::Kick do
     # Bob should still be in channel since Alice is not an operator
     user_in_channel?(channel_name, kicked_user.nickname.to_s).should be_true
   end
+
+  it "kicks multiple users from one channel" do
+    sender = create_test_client("Alice")
+    create_test_client("Bob")
+    create_test_client("Carol")
+
+    channel_name = "#test"
+    domain_channel = create_test_channel(channel_name)
+    domain_channel.add_member("Alice")
+    domain_channel.members["Alice"] << 'o'
+    domain_channel.add_member("Bob")
+    domain_channel.add_member("Carol")
+
+    Circed::Actions::Kick.call(sender, ["#test", "Bob,Carol", "cleanup"])
+
+    user_in_channel?(channel_name, "Bob").should be_false
+    user_in_channel?(channel_name, "Carol").should be_false
+  end
 end

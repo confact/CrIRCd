@@ -10,7 +10,7 @@ module Circed
         params.each do |param|
           io << ' ' << param
         end
-        io << '\n'
+        io << "\r\n"
       end
     end
 
@@ -20,7 +20,7 @@ module Circed
         params.each do |param|
           io << ' ' << param
         end
-        io << '\n'
+        io << "\r\n"
       end
     end
   end

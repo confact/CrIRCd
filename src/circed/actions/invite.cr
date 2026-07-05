@@ -5,23 +5,19 @@ module Circed
     protected def self.execute_action(sender : Client, invited_user : String, channel_name : String) : Nil
       return unless sender_nick = sender.nickname
 
-      # Validate channel name format
-      unless Utils::IrcUtils.valid_channel_name?(channel_name)
-        Utils::IrcUtils.send_channel_error(sender, channel_name)
-        return
-      end
-
-      # Check if channel exists
       channel_repo = channel_repository
-      unless channel_repo.exists?(channel_name)
-        Utils::IrcUtils.send_no_such_channel_error(sender, channel_name)
-        return
-      end
 
-      # Check if sender is in the channel
-      unless channel_repo.user_in_channel?(channel_name, sender_nick)
-        Utils::IrcUtils.send_not_on_channel_error(sender, channel_name)
-        return
+      if channel = channel_repo.get(channel_name)
+        # Check if sender is in the channel
+        unless channel.has_member?(sender_nick)
+          Utils::IrcUtils.send_not_on_channel_error(sender, channel_name)
+          return
+        end
+
+        if channel.invite_only? && !Utils::IrcUtils.user_is_operator?(channel, sender_nick)
+          Utils::IrcUtils.send_not_operator_error(sender, channel_name)
+          return
+        end
       end
 
       # Check if invited user exists

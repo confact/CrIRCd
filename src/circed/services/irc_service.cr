@@ -211,18 +211,46 @@ module Circed
       # Set channel topic with validation and network sync
       def update_topic(client : Client, channel_name : String, topic : String) : Bool
         return false unless nickname = client.nickname
-        return false unless channel = validate_channel_operator(client, channel_name, nickname)
+        return false unless channel = validate_topic_change(client, channel_name, nickname)
 
         # Set topic
-        channel.topic = topic
-        channel.topic_set_by = nickname
-        channel.topic_set_at = Time.utc
+        if topic.empty?
+          channel.topic = nil
+          channel.topic_set_by = nil
+          channel.topic_set_at = nil
+        else
+          channel.topic = topic
+          channel.topic_set_by = nickname
+          channel.topic_set_at = Time.utc
+        end
 
         # Send notifications
         @notification_service.notify_topic_change(channel_name, topic, nickname)
 
         # Propagate to network
         propagate_to_network(":#{client.hostmask} TOPIC #{channel_name} :#{topic}")
+
+        true
+      end
+
+      def query_topic(client : Client, channel_name : String) : Bool
+        return false unless nickname = client.nickname
+        return false unless Utils::IrcUtils.validate_channel_name(client, channel_name)
+
+        channel = @channel_repository.get(channel_name)
+        unless channel
+          Utils::IrcUtils.send_no_such_channel_error(client, channel_name)
+          return false
+        end
+
+        if topic = channel.topic
+          client.send_message(Server.clean_name, Numerics::RPL_TOPIC, nickname, channel_name, ":#{topic}")
+          if (topic_by = channel.topic_set_by) && (topic_time = channel.topic_set_at)
+            client.send_message(Server.clean_name, Numerics::RPL_TOPICTIME, nickname, channel_name, topic_by, topic_time.to_unix.to_s)
+          end
+        else
+          client.send_message(Server.clean_name, Numerics::RPL_NOTOPIC, nickname, channel_name, ":No topic is set")
+        end
 
         true
       end
@@ -600,6 +628,28 @@ module Circed
         end
 
         unless Utils::IrcUtils.user_is_operator?(channel, nickname)
+          Utils::IrcUtils.send_not_operator_error(client, channel_name)
+          return nil
+        end
+
+        channel
+      end
+
+      private def validate_topic_change(client : Client, channel_name : String, nickname : String) : Domain::Channel?
+        return nil unless Utils::IrcUtils.validate_channel_name(client, channel_name)
+
+        channel = @channel_repository.get(channel_name)
+        unless channel
+          Utils::IrcUtils.send_no_such_channel_error(client, channel_name)
+          return nil
+        end
+
+        unless channel.has_member?(nickname)
+          Utils::IrcUtils.send_not_on_channel_error(client, channel_name)
+          return nil
+        end
+
+        if channel.has_mode?('t') && !Utils::IrcUtils.user_is_operator?(channel, nickname)
           Utils::IrcUtils.send_not_operator_error(client, channel_name)
           return nil
         end

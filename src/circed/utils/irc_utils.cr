@@ -25,7 +25,11 @@ module Circed
       # Channel validation utilities
       def self.valid_channel_name?(channel_name : String) : Bool
         return false if channel_name.empty?
-        channel_name.starts_with?('#') || channel_name.starts_with?('&')
+        return false unless "#&+!".includes?(channel_name[0])
+        return false if channel_name.includes?(' ') || channel_name.includes?(',') || channel_name.includes?('\a')
+        return false if channel_name.includes?('\0') || channel_name.includes?('\r') || channel_name.includes?('\n')
+
+        true
       end
 
       # Validate channel name and send error if invalid

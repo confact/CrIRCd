@@ -190,9 +190,9 @@ module Circed
       return unless sender.nickname
 
       if args.size == 1
-        io << ':' << sender.hostmask << " NICK :" << args[0] << '\n'
+        io << ':' << sender.hostmask << " NICK :" << args[0] << "\r\n"
       else
-        io << ':' << sender.hostmask << ' ' << args.join(' ') << '\n'
+        io << ':' << sender.hostmask << ' ' << args.join(' ') << "\r\n"
       end
     end
   end

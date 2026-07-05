@@ -7,6 +7,7 @@ module Circed
     OUTBOUND_QUEUE_CAPACITY = 1024
     OUTBOUND_BATCH_MESSAGES =   64
     OUTBOUND_BATCH_BYTES    = 64 * 1024
+    IRC_LINE_END            = "\r\n"
 
     property socket : Network::SSLSocket::IRCSocket? = nil
     getter host : String?
@@ -120,13 +121,13 @@ module Circed
       Log.info { message }
       return log_closed_socket_and_exit if closed?
 
-      enqueue_outbound(String.build { |io| io << message << '\n' })
+      enqueue_outbound(terminate_message(message))
     end
 
     def send_error(message)
       Log.info { "Sending ERROR to #{@nickname}: #{message}" }
       return if closed?
-      enqueue_outbound(String.build { |io| io << "ERROR :" << message << '\n' })
+      enqueue_outbound(terminate_message("ERROR :#{message}"))
     end
 
     def notice(message)
@@ -287,7 +288,7 @@ module Circed
       when "WHO"
         Actions::Who.call(self, payload.params.first) unless payload.params.empty?
       when "NAMES"
-        Actions::Names.call(self, payload.params.first) unless payload.params.empty?
+        Actions::Names.call(self, payload.params.first?)
       when "LINKS"
         Commands::ServerCommands.links(self, payload.params)
       when "STATS"
@@ -314,7 +315,7 @@ module Circed
         Actions::Away.call(self, away_message)
       when "CAP"
         return if payload.params.empty?
-        Actions::Cap.call(self, payload.params)
+        Actions::Cap.call(self, payload.params.first, payload.params[1]?)
       end
     end
 
@@ -382,15 +383,25 @@ module Circed
     private def handle_join_command(payload : FastIRC::Message) : Nil
       return unless require_param_count(payload, 1, "JOIN")
 
-      Actions::Join.call(self, payload.params.first)
+      channel_param = payload.params.first
+      if channel_param == "0"
+        channels.each { |channel| Actions::Part.call(self, channel.name) }
+        return
+      end
+
+      keys = split_list_param(payload.params[1]?)
+      split_list_param(channel_param).each_with_index do |channel_name, index|
+        Actions::Join.call(self, channel_name, keys[index]?)
+      end
     end
 
     private def handle_part_command(payload : FastIRC::Message) : Nil
       return unless require_param_count(payload, 1, "PART")
 
-      channel_name = payload.params.first
       reason = payload.params.size > 1 ? payload.params[1].lchop(':') : nil
-      Actions::Part.call(self, channel_name, reason)
+      split_list_param(payload.params.first).each do |channel_name|
+        Actions::Part.call(self, channel_name, reason)
+      end
     end
 
     private def handle_kick_command(payload : FastIRC::Message) : Nil
@@ -426,10 +437,7 @@ module Circed
         Actions::Quit.call(self, joined_params(payload.params)) unless payload.params.empty?
         quit(payload.params)
       when "NOTICE"
-        if payload.params.size < 2
-          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "NOTICE", ":Not enough parameters")
-          return
-        end
+        return if payload.params.size < 2
         target = payload.params.first
         message = joined_params(payload.params, 1)
         Actions::Notice.call(self, target, message)
@@ -461,6 +469,12 @@ module Circed
           index += 1
         end
       end
+    end
+
+    private def split_list_param(param : String?) : Array(String)
+      return [] of String unless param
+
+      param.split(',').reject(&.empty?)
     end
 
     private def get_hostname : String?
@@ -586,13 +600,13 @@ module Circed
         params.each do |param|
           io << ' ' << param
         end
-        io << '\n'
+        io << IRC_LINE_END
       end
     end
 
     private def create_ping_message : String
       String.build do |io|
-        io << "PING :" << (nickname || Server.name) << ' ' << Server.clean_name << '\n'
+        io << "PING :" << (nickname || Server.name) << ' ' << Server.clean_name
       end
     end
 
@@ -602,7 +616,12 @@ module Circed
         params.each do |param|
           io << ' ' << param
         end
-        io << '\n'
+      end
+    end
+
+    private def terminate_message(message : String) : String
+      String.build(capacity: message.bytesize + IRC_LINE_END.bytesize) do |io|
+        io << message << IRC_LINE_END
       end
     end
 

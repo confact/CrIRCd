@@ -2,6 +2,8 @@ require "./base_action"
 
 module Circed
   class Actions::Cap < Actions::BaseAction
+    SUPPORTED_CAPS = [] of String
+
     protected def self.execute_action(sender : Client, subcommand : String, capabilities : String? = nil) : Nil
       case subcommand.upcase
       when "LS"
@@ -21,24 +23,12 @@ module Circed
       end
     end
 
-    private def self.handle_cap_ls(sender : Client, version : String?)
-      # Basic capabilities we support
-      supported_caps = [
-        "multi-prefix",      # Multiple prefix support
-        "extended-join",     # Extended JOIN messages
-        "account-notify",    # Account change notifications
-        "away-notify",       # Away status notifications
-        "chghost",           # Host change support
-        "userhost-in-names", # Userhost in NAMES
-        "cap-notify",        # Capability change notifications
-        "server-time",       # Server timestamps
-        "message-tags",      # Message tags support
-        "batch",             # Batch message support
-        "labeled-response",  # Labeled responses
-        "sasl",              # SASL authentication
-      ]
+    protected def self.validate_sender(_sender : Client) : Bool
+      true
+    end
 
-      caps_string = supported_caps.join(" ")
+    private def self.handle_cap_ls(sender : Client, version : String?)
+      caps_string = SUPPORTED_CAPS.join(" ")
 
       if version && version.to_i >= 302
         # Multi-line LS response for CAP 302+ - end with final message
@@ -57,18 +47,13 @@ module Circed
       return unless capabilities
 
       requested_caps = capabilities.split(" ")
-      supported_caps = [
-        "multi-prefix", "extended-join", "account-notify", "away-notify",
-        "chghost", "userhost-in-names", "cap-notify", "server-time",
-        "message-tags", "batch", "labeled-response", "sasl",
-      ]
 
       # Check which capabilities we can support
       ack_caps = [] of String
       nak_caps = [] of String
 
       requested_caps.each do |cap|
-        if supported_caps.includes?(cap)
+        if SUPPORTED_CAPS.includes?(cap)
           ack_caps << cap
         else
           nak_caps << cap

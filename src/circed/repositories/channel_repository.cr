@@ -237,7 +237,7 @@ module Circed
 
       private def normalize_channel_name(name : String) : String
         # Ensure channel name starts with # if it doesn't already
-        name.starts_with?('#') || name.starts_with?('&') ? name : "##{name}"
+        "#&+!".includes?(name[0]) ? name : "##{name}"
       end
 
       private def index_channel_members(channel_name : String, channel : Domain::Channel) : Void
