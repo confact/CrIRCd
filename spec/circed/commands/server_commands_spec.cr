@@ -91,6 +91,26 @@ describe Circed::Commands::ServerCommands do
     end
   end
 
+  describe "WALLOPS command" do
+    it "forwards server wallops to local users with +w mode" do
+      link_server = create_link_server
+      wallops_user = create_test_client("Alice")
+      quiet_user = create_test_client("Bob")
+      user_repository.get("Alice").try { |user| user.modes << 'w' }
+
+      Circed::Commands::ServerCommands.wallops(link_server, [":Network maintenance"])
+
+      wallops_user.socket.as(DummySocket).sent_data.join.should contain("WALLOPS :Network maintenance")
+      quiet_user.socket.as(DummySocket).sent_data.join.should_not contain("WALLOPS")
+    end
+
+    it "handles empty WALLOPS parameters gracefully" do
+      link_server = create_link_server
+
+      Circed::Commands::ServerCommands.wallops(link_server, [] of String)
+    end
+  end
+
   describe "NJOIN command" do
     it "joins multiple users to channel efficiently" do
       link_server = create_link_server

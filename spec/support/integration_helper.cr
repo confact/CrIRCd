@@ -364,6 +364,16 @@ module IntegrationHelper
       self
     end
 
+    def add_operator(name : String, password : String, hosts : Array(String) = ["*"] of String, local : Bool = false) : self
+      operators << YAML::Any.new({
+        YAML::Any.new("name")     => YAML::Any.new(name),
+        YAML::Any.new("password") => YAML::Any.new(password),
+        YAML::Any.new("hosts")    => YAML::Any.new(hosts.map { |host| YAML::Any.new(host) }),
+        YAML::Any.new("local")    => YAML::Any.new(local),
+      })
+      self
+    end
+
     private def ssl_config
       ssl_key = YAML::Any.new("ssl")
       @config[ssl_key] ||= YAML::Any.new({} of YAML::Any => YAML::Any)
@@ -374,6 +384,12 @@ module IntegrationHelper
       servers_key = YAML::Any.new("linked_servers")
       @config[servers_key] ||= YAML::Any.new([] of YAML::Any)
       @config[servers_key].as_a
+    end
+
+    private def operators
+      operators_key = YAML::Any.new("operators")
+      @config[operators_key] ||= YAML::Any.new([] of YAML::Any)
+      @config[operators_key].as_a
     end
 
     def save : String
@@ -431,6 +447,10 @@ module IntegrationHelper
     @default_client_ssl = true
 
     def setup_single_server(ssl_enabled = true)
+      setup_single_server(ssl_enabled) { |_| }
+    end
+
+    def setup_single_server(ssl_enabled, & : ConfigBuilder ->)
       ensure_setup
       @server1_client_port = ssl_enabled ? 16697 : 16667
       @server2_client_port = ssl_enabled ? 17697 : 17667
@@ -445,6 +465,7 @@ module IntegrationHelper
         config.ssl_enabled(ssl_enabled)
         config.ssl_port(16697)
         config.ssl_cert("spec/fixtures/ssl/server1/server.crt", "spec/fixtures/ssl/server1/server.key") if ssl_enabled
+        yield config
       end
 
       server = TestServer.new("test_server1", 16667, 16697, ssl_enabled)

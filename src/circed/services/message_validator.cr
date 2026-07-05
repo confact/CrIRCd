@@ -101,11 +101,11 @@ module Circed
       # Validate IRC command parameters count
       def self.validate_command_params(command : String, params : Array(String)) : Bool
         case command.upcase
-        when "NICK", "USER"
+        when "NICK", "USER", "OPER"
           validate_user_command_params(command, params)
         when "JOIN", "PART", "TOPIC"
           validate_channel_command_params(command, params)
-        when "PRIVMSG", "NOTICE", "KICK", "INVITE"
+        when "PRIVMSG", "NOTICE", "KICK", "INVITE", "KILL", "CONNECT", "SQUIT", "WALLOPS"
           validate_messaging_command_params(command, params)
         when "MODE", "WHOIS", "QUIT", "AWAY", "NAMES", "WHO"
           validate_misc_command_params(command, params)
@@ -120,6 +120,8 @@ module Circed
           params.size == 1
         when "USER"
           params.size == 4
+        when "OPER"
+          params.size == 2
         else
           true
         end
@@ -138,8 +140,14 @@ module Circed
         case command.upcase
         when "PRIVMSG", "NOTICE", "INVITE"
           params.size == 2
-        when "KICK"
+        when "KICK", "KILL"
           params.size >= 2 && params.size <= 3
+        when "CONNECT"
+          params.size >= 1 && params.size <= 3
+        when "SQUIT"
+          params.size >= 2
+        when "WALLOPS"
+          params.size >= 1
         else
           true
         end

@@ -201,7 +201,7 @@ module Circed
         handle_connection_commands(payload)
       when "SERVER", "SQUIT"
         handle_server_commands(payload)
-      when "PRIVMSG", "NOTICE", "TOPIC", "AWAY"
+      when "PRIVMSG", "NOTICE", "TOPIC", "AWAY", "WALLOPS"
         handle_messaging_commands(payload)
       when "JOIN", "PART", "QUIT", "NICK", "MODE"
         handle_user_state_change(payload)
@@ -242,6 +242,8 @@ module Circed
         handle_topic_change(payload)
       when "AWAY"
         handle_away_change(payload)
+      when "WALLOPS"
+        Commands::ServerCommands.wallops(self, payload.params)
       end
     end
 

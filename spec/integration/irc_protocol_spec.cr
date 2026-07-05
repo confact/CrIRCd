@@ -175,6 +175,25 @@ describe "IRC Protocol Integration" do
   end
 
   describe "user modes and away status" do
+    it "grants IRC operator mode with OPER" do
+      env.setup_single_server(ssl_enabled: false) do |config|
+        config.add_operator("global", "secret", ["*!alice@localhost"])
+      end
+
+      alice = env.create_client("Alice")
+      alice.register("alice")
+
+      alice.send("OPER global secret")
+      alice.should_receive(/381.*Alice.*You are now an IRC operator/)
+      alice.should_receive(/MODE Alice \+o/)
+
+      alice.send("MODE Alice +O")
+      alice.send("MODE Alice")
+      alice.should_receive(/221.*Alice.*\+o/)
+
+      alice.quit
+    end
+
     it "handles AWAY command" do
       env.setup_single_server(ssl_enabled: false)
 
