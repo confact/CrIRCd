@@ -66,6 +66,27 @@ describe "IRC operator support" do
     client.socket.as(DummySocket).sent_data.join.should contain(" MODE Alice +O")
   end
 
+  it "replaces stale operator modes in local and network state" do
+    client = create_test_client("Alice")
+    Circed::Network::NetworkState.add_user("Alice", "test", "localhost", "Alice", "test_server")
+
+    service = Circed::Infrastructure::ServiceLocator.irc_service
+    service.oper(client, "global", "secret")
+    service.oper(client, "local", "local-secret")
+
+    local_modes = user_repository.get("Alice").try(&.modes)
+    local_modes.should_not be_nil
+    local_modes.try(&.includes?('O')).should be_true
+    local_modes.try(&.includes?('o')).should be_false
+
+    network_modes = Circed::Network::NetworkState.get_user("Alice").try(&.modes)
+    network_modes.should_not be_nil
+    network_modes.try(&.includes?('O')).should be_true
+    network_modes.try(&.includes?('o')).should be_false
+
+    client.socket.as(DummySocket).sent_data.join.should contain(" MODE Alice -o+O")
+  end
+
   it "rejects bad operator passwords" do
     client = create_test_client("Alice")
 
@@ -101,6 +122,27 @@ describe "IRC operator support" do
 
     user_repository.get("Bob").should be_nil
     victim.socket.as(DummySocket).sent_data.join.should contain("ERROR :Killed by Alice: Testing")
+  end
+
+  it "rejects local operator KILL for remote users" do
+    oper = create_test_client("Alice")
+    user_repository.get("Alice").try { |user| user.modes << 'O' }
+    Circed::Network::NetworkState.add_user("RemoteBob", "bob", "remote.example", "Bob", "remote.server", 1)
+
+    Circed::Infrastructure::ServiceLocator.irc_service.kill_user(oper, "RemoteBob", "Testing")
+
+    Circed::Network::NetworkState.get_user("RemoteBob").should_not be_nil
+    oper.socket.as(DummySocket).sent_data.join.should contain(" 481 Alice :Permission Denied- You're not a global IRC operator")
+  end
+
+  it "allows global operator KILL for remote users" do
+    oper = create_test_client("Alice")
+    user_repository.get("Alice").try { |user| user.modes << 'o' }
+    Circed::Network::NetworkState.add_user("RemoteBob", "bob", "remote.example", "Bob", "remote.server", 1)
+
+    Circed::Infrastructure::ServiceLocator.irc_service.kill_user(oper, "RemoteBob", "Testing")
+
+    Circed::Network::NetworkState.get_user("RemoteBob").should be_nil
   end
 
   it "rejects KILL from non-operators" do
@@ -163,6 +205,15 @@ describe "IRC operator support" do
     sent.should contain(" 402 Alice irc.example.com :No such server")
   end
 
+  it "rejects local operator CONNECT forwarding to another server" do
+    oper = create_test_client("Alice")
+    user_repository.get("Alice").try { |user| user.modes << 'O' }
+
+    Circed::Infrastructure::ServiceLocator.irc_service.connect_server(oper, "irc.example.com", nil, "remote.server.com")
+
+    oper.socket.as(DummySocket).sent_data.join.should contain(" 481 Alice :Permission Denied- You're not a global IRC operator")
+  end
+
   it "sends WALLOPS from operators to local wallops users" do
     oper = create_test_client("Alice")
     wallops_user = create_test_client("Bob")
@@ -174,5 +225,16 @@ describe "IRC operator support" do
 
     wallops_user.socket.as(DummySocket).sent_data.join.should contain(":localhost WALLOPS :Server notice")
     quiet_user.socket.as(DummySocket).sent_data.join.should_not contain("WALLOPS")
+  end
+
+  it "allows local operators to send WALLOPS to local wallops users" do
+    oper = create_test_client("Alice")
+    wallops_user = create_test_client("Bob")
+    user_repository.get("Alice").try { |user| user.modes << 'O' }
+    user_repository.get("Bob").try { |user| user.modes << 'w' }
+
+    Circed::Infrastructure::ServiceLocator.irc_service.wallops(oper, "Local notice")
+
+    wallops_user.socket.as(DummySocket).sent_data.join.should contain(":localhost WALLOPS :Local notice")
   end
 end

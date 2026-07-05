@@ -318,13 +318,16 @@ module Circed
           return false
         end
 
-        unless @user_repository.get(target_nickname) || Network::NetworkState.get_user(target_nickname)
+        local_user = @user_repository.get(target_nickname)
+        network_user = Network::NetworkState.get_user(target_nickname)
+        unless local_user || network_user
           Utils::IrcUtils.send_no_such_nick_error(client, target_nickname)
           return false
         end
+        return false if network_user && !local_user && !require_global_irc_operator(client)
 
         kill_message = ":#{client.hostmask} KILL #{target_nickname} :#{reason}"
-        propagate_to_network(kill_message)
+        propagate_to_network(kill_message) if network_user || global_irc_operator?(nickname)
         disconnect_killed_local_user(target_nickname, nickname, reason)
         @channel_repository.remove_user_from_all_channels(target_nickname)
         @user_repository.remove(target_nickname)
@@ -349,6 +352,8 @@ module Circed
         return false unless nickname = client.nickname
 
         if remote_server && remote_server != Server.name
+          return false unless require_global_irc_operator(client)
+
           if server = find_server_by_name(remote_server)
             message = String.build do |io|
               io << "CONNECT " << host
@@ -414,10 +419,11 @@ module Circed
 
       def wallops(client : Client, message : String) : Bool
         return false unless require_irc_operator(client)
+        return false unless nickname = client.nickname
 
         wallops_message = ":#{Server.name} WALLOPS :#{message}"
         send_wallops_to_local_users(wallops_message)
-        propagate_to_network(wallops_message)
+        propagate_to_network(wallops_message) if global_irc_operator?(nickname)
         true
       end
 
@@ -702,16 +708,37 @@ module Circed
       private def grant_operator_mode(client : Client, nickname : String, mode : Char)
         return unless user = @user_repository.get(nickname)
 
+        mode_string = operator_mode_change(user.modes, mode)
         user.modes.delete('o')
         user.modes.delete('O')
         user.modes << mode
         @user_repository.add(nickname, user)
-        Network::NetworkState.get_user(nickname).try(&.modes.<<(mode))
+        if network_user = Network::NetworkState.get_user(nickname)
+          network_user.modes.delete('o')
+          network_user.modes.delete('O')
+          network_user.modes << mode
+        end
 
-        mode_string = "+#{mode}"
         client.send_message(Server.clean_name, Numerics::RPL_YOUREOPER, nickname, ":You are now an IRC operator")
         client.send_message(Server.clean_name, "MODE", nickname, mode_string)
         propagate_to_network(":#{client.hostmask} MODE #{nickname} #{mode_string}")
+      end
+
+      private def operator_mode_change(current_modes : Set(Char), new_mode : Char) : String
+        String.build do |io|
+          removing_modes = false
+          current_modes.each do |mode|
+            next unless (mode == 'o' || mode == 'O') && mode != new_mode
+
+            unless removing_modes
+              io << '-'
+              removing_modes = true
+            end
+            io << mode
+          end
+
+          io << '+' << new_mode
+        end
       end
 
       private def oper_host_masks(client : Client) : Array(String)
@@ -735,11 +762,25 @@ module Circed
         user.modes.includes?('o') || user.modes.includes?('O')
       end
 
+      private def global_irc_operator?(nickname : String) : Bool
+        return false unless user = @user_repository.get(nickname)
+
+        user.modes.includes?('o')
+      end
+
       private def require_irc_operator(client : Client) : Bool
         return false unless nickname = client.nickname
         return true if irc_operator?(nickname)
 
         client.send_message(Server.clean_name, Numerics::ERR_NOPRIVILEGES, nickname, ":Permission Denied- You're not an IRC operator")
+        false
+      end
+
+      private def require_global_irc_operator(client : Client) : Bool
+        return false unless nickname = client.nickname
+        return true if global_irc_operator?(nickname)
+
+        client.send_message(Server.clean_name, Numerics::ERR_NOPRIVILEGES, nickname, ":Permission Denied- You're not a global IRC operator")
         false
       end
 

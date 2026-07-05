@@ -406,8 +406,10 @@ module Circed
       if target.starts_with?('#') || target.starts_with?('&')
         # Channel mode change
         if channel = Network::NetworkState.get_channel(target)
-          parse_channel_modes(channel, modes)
+          parse_modes(channel.modes, modes)
         end
+      elsif user = Network::NetworkState.get_user(target)
+        parse_modes(user.modes, modes)
       end
 
       Log.debug { "Mode change on #{target}: #{modes}" }
@@ -456,7 +458,7 @@ module Circed
       payload.prefix.try(&.source) || ""
     end
 
-    private def parse_channel_modes(channel : Network::NetworkState::ChannelInfo, modes : String)
+    private def parse_modes(target_modes : Set(Char), modes : String)
       adding = true
       modes.each_char do |char|
         case char
@@ -466,9 +468,9 @@ module Circed
           adding = false
         else
           if adding
-            channel.modes << char
+            target_modes << char
           else
-            channel.modes.delete(char)
+            target_modes.delete(char)
           end
         end
       end
