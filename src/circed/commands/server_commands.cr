@@ -56,6 +56,27 @@ module Circed
         end
       end
 
+      # WALLOPS - Send an operator wall notice from a server
+      # Format: WALLOPS :<message>
+      def self.wallops(link_server : LinkServer, params : Array(String)) : Nil
+        return if params.empty?
+
+        message = params.join(' ').lstrip(':')
+        source = link_server.name.empty? ? link_server.target_host : link_server.name
+        wallops_message = ":#{source} WALLOPS :#{message}"
+        user_repository = Infrastructure::ServiceLocator.user_repository
+
+        user_repository.each_client do |client|
+          next unless nickname = client.nickname
+          next unless user = user_repository.get(nickname)
+          next unless user.modes.includes?('w')
+
+          client.send_message(wallops_message)
+        end
+
+        forward_to_servers(link_server, "WALLOPS", params)
+      end
+
       # LINKS - Server list query
       # Format: LINKS [<remote server>] [<server mask>]
       def self.links(client : Client, params : Array(String))

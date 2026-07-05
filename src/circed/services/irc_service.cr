@@ -282,6 +282,145 @@ module Circed
         end
       end
 
+      def oper(client : Client, oper_name : String, password : String) : Bool
+        unless client.registered?
+          client.send_message(Server.clean_name, Numerics::ERR_NOTREGISTERED, client.nickname || "*", ":You have not registered")
+          return false
+        end
+
+        nickname = client.nickname
+        return false unless nickname
+
+        operator_configs = Server.config.operators.select { |operator| operator.name == oper_name }
+        if operator_configs.empty? || operator_configs.none? { |operator| operator.password == password }
+          client.send_message(Server.clean_name, Numerics::ERR_PASSWDMISMATCH, nickname, ":Password incorrect")
+          return false
+        end
+
+        operator_config = operator_configs.find do |operator|
+          operator.matches?(oper_name, password, oper_host_masks(client))
+        end
+        unless operator_config
+          client.send_message(Server.clean_name, Numerics::ERR_NOOPERHOST, nickname, ":No O-lines for your host")
+          return false
+        end
+
+        grant_operator_mode(client, nickname, operator_config.mode)
+        true
+      end
+
+      def kill_user(client : Client, target_nickname : String, reason : String) : Bool
+        return false unless require_irc_operator(client)
+        return false unless nickname = client.nickname
+
+        if target_nickname.includes?('.')
+          client.send_message(Server.clean_name, Numerics::ERR_CANTKILLSERVER, nickname, target_nickname, ":You can't kill a server!")
+          return false
+        end
+
+        local_user = @user_repository.get(target_nickname)
+        network_user = Network::NetworkState.get_user(target_nickname)
+        unless local_user || network_user
+          Utils::IrcUtils.send_no_such_nick_error(client, target_nickname)
+          return false
+        end
+        return false if network_user && !local_user && !require_global_irc_operator(client)
+
+        kill_message = ":#{client.hostmask} KILL #{target_nickname} :#{reason}"
+        propagate_to_network(kill_message) if network_user || global_irc_operator?(nickname)
+        disconnect_killed_local_user(target_nickname, nickname, reason)
+        @channel_repository.remove_user_from_all_channels(target_nickname)
+        @user_repository.remove(target_nickname)
+        Network::NetworkState.remove_user(target_nickname)
+        true
+      end
+
+      def rehash(client : Client) : Bool
+        return false unless require_irc_operator(client)
+        return false unless nickname = client.nickname
+
+        Server.rehash_config!
+        client.send_message(Server.clean_name, Numerics::RPL_REHASHING, nickname, Server.name, ":Rehashing")
+        true
+      rescue ex
+        client.send_message(Server.clean_name, Numerics::ERR_UNKNOWNERROR, nickname || "*", "REHASH", ":#{ex.message}")
+        false
+      end
+
+      def connect_server(client : Client, host : String, port : Int32? = nil, remote_server : String? = nil) : Bool
+        return false unless require_irc_operator(client)
+        return false unless nickname = client.nickname
+
+        if remote_server && remote_server != Server.name
+          return false unless require_global_irc_operator(client)
+
+          if target_server = find_network_server_name(remote_server)
+            message = String.build do |io|
+              io << "CONNECT " << host
+              io << ' ' << port if port
+              io << ' ' << target_server
+            end
+            return true if send_to_server_route(target_server, message)
+          end
+
+          client.send_message(Server.clean_name, Numerics::ERR_NOSUCHSERVER, nickname, remote_server, ":No such server")
+          return false
+        end
+
+        unless Server.connect_linked_server(host, port)
+          client.send_message(Server.clean_name, Numerics::RPL_TRYAGAIN, nickname, "CONNECT", ":Please wait a while and try again.")
+          return false
+        end
+
+        true
+      end
+
+      def squit_server(client : Client, server_name : String, comment : String) : Bool
+        return false unless require_irc_operator(client)
+        return false unless nickname = client.nickname
+
+        if server = find_server_by_name(server_name)
+          server.safe_send("SQUIT #{server_name} :#{comment}")
+          server.close("Operator SQUIT: #{comment}")
+          return true
+        end
+
+        return false unless require_global_irc_operator(client)
+
+        if target_server = find_network_server_name(server_name)
+          return true if send_to_server_route(target_server, "SQUIT #{target_server} :#{comment}")
+        end
+
+        client.send_message(Server.clean_name, Numerics::ERR_NOSUCHSERVER, nickname, server_name, ":No such server")
+        false
+      end
+
+      def die(client : Client, reason : String) : Bool
+        return false unless require_irc_operator(client)
+        return false unless nickname = client.nickname
+
+        unless Server.config.allow_die?
+          client.send_message(Server.clean_name, Numerics::ERR_NOPRIVILEGES, nickname, ":DIE is disabled in server configuration")
+          return false
+        end
+
+        spawn { Server.shutdown_by_operator(reason) }
+        true
+      end
+
+      def restart(client : Client, reason : String) : Bool
+        return false unless require_irc_operator(client)
+        return false unless nickname = client.nickname
+
+        unless Server.config.allow_restart?
+          client.send_message(Server.clean_name, Numerics::ERR_NOPRIVILEGES, nickname, ":RESTART is disabled in server configuration")
+          return false
+        end
+
+        spawn { Server.restart_by_operator(reason) }
+        true
+      end
+
       private def query_channel_mode(client : Client, channel_name : String, nickname : String) : Bool
         channel = @channel_repository.get(channel_name)
         unless channel
@@ -499,8 +638,7 @@ module Circed
         # Parse mode string
         return false if mode_string.size < 2
 
-        adding = mode_string.starts_with?("+")
-        mode_string[1..].each_char { |mode_char| apply_user_mode(user, mode_char, adding) }
+        applied_modes = apply_user_mode_string(user, mode_string)
 
         # Send mode change notification to user
         client.send_message(
@@ -511,7 +649,7 @@ module Circed
         )
 
         # Propagate to network
-        propagate_to_network(":#{client.hostmask} MODE #{nickname} #{mode_string}")
+        propagate_to_network(":#{client.hostmask} MODE #{nickname} #{applied_modes}") unless applied_modes.empty?
 
         # Update repository
         @user_repository.add(nickname, user)
@@ -524,12 +662,158 @@ module Circed
         "+#{user.modes.join("")}"
       end
 
-      private def apply_user_mode(user : Domain::User, mode_char : Char, adding : Bool)
+      private def apply_user_mode_string(user : Domain::User, mode_string : String) : String
+        adding = true
+        last_sign = '\0'
+
+        String.build do |io|
+          mode_string.each_char do |mode_char|
+            case mode_char
+            when '+'
+              adding = true
+            when '-'
+              adding = false
+            else
+              next unless apply_user_mode(user, mode_char, adding)
+
+              sign = adding ? '+' : '-'
+              if sign != last_sign
+                io << sign
+                last_sign = sign
+              end
+              io << mode_char
+            end
+          end
+        end
+      end
+
+      private def apply_user_mode(user : Domain::User, mode_char : Char, adding : Bool) : Bool
         if SELF_USER_MODES.includes?(mode_char)
           adding ? user.modes << mode_char : user.modes.delete(mode_char)
-        elsif mode_char == 'o' && !adding
+          true
+        elsif (mode_char == 'o' || mode_char == 'O') && !adding
           user.modes.delete(mode_char)
+          true
+        else
+          false
         end
+      end
+
+      private def grant_operator_mode(client : Client, nickname : String, mode : Char)
+        return unless user = @user_repository.get(nickname)
+
+        mode_string = operator_mode_change(user.modes, mode)
+        user.modes.delete('o')
+        user.modes.delete('O')
+        user.modes << mode
+        @user_repository.add(nickname, user)
+        if network_user = Network::NetworkState.get_user(nickname)
+          network_user.modes.delete('o')
+          network_user.modes.delete('O')
+          network_user.modes << mode
+        end
+
+        client.send_message(Server.clean_name, Numerics::RPL_YOUREOPER, nickname, ":You are now an IRC operator")
+        client.send_message(Server.clean_name, "MODE", nickname, mode_string)
+        propagate_to_network(":#{client.hostmask} MODE #{nickname} #{mode_string}")
+      end
+
+      private def operator_mode_change(current_modes : Set(Char), new_mode : Char) : String
+        String.build do |io|
+          removing_modes = false
+          current_modes.each do |mode|
+            next unless (mode == 'o' || mode == 'O') && mode != new_mode
+
+            unless removing_modes
+              io << '-'
+              removing_modes = true
+            end
+            io << mode
+          end
+
+          io << '+' << new_mode
+        end
+      end
+
+      private def oper_host_masks(client : Client) : Array(String)
+        masks = [] of String
+        if hostmask = client.hostmask
+          masks << hostmask
+        end
+        masks << client.hostname
+        if host = client.host
+          masks << host
+          if host.includes?(':')
+            masks << host.rpartition(':')[0]
+          end
+        end
+        masks
+      end
+
+      private def irc_operator?(nickname : String) : Bool
+        return false unless user = @user_repository.get(nickname)
+
+        user.modes.includes?('o') || user.modes.includes?('O')
+      end
+
+      private def global_irc_operator?(nickname : String) : Bool
+        return false unless user = @user_repository.get(nickname)
+
+        user.modes.includes?('o')
+      end
+
+      private def require_irc_operator(client : Client) : Bool
+        return false unless nickname = client.nickname
+        return true if irc_operator?(nickname)
+
+        client.send_message(Server.clean_name, Numerics::ERR_NOPRIVILEGES, nickname, ":Permission Denied- You're not an IRC operator")
+        false
+      end
+
+      private def require_global_irc_operator(client : Client) : Bool
+        return false unless nickname = client.nickname
+        return true if global_irc_operator?(nickname)
+
+        client.send_message(Server.clean_name, Numerics::ERR_NOPRIVILEGES, nickname, ":Permission Denied- You're not a global IRC operator")
+        false
+      end
+
+      private def find_server_by_name(server_name : String) : LinkServer?
+        ServerHandler.servers.find do |server|
+          server.name == server_name ||
+            server.target_host == server_name ||
+            "#{server.target_host}:#{server.target_port}" == server_name
+        end
+      end
+
+      private def find_network_server_name(server_mask : String) : String?
+        return Server.name if server_mask == Server.name
+        if server = find_server_by_name(server_mask)
+          return server.name
+        end
+        return server_mask if Network::NetworkState.get_server(server_mask)
+
+        Network::NetworkState.server_list(server_mask).first?.try(&.name)
+      end
+
+      private def send_to_server_route(target_server : String, message : String) : LinkServer?
+        server = find_server_by_name(target_server)
+        unless server
+          if route_to_server = find_route_to_server(target_server)
+            server = find_server_by_name(route_to_server)
+          end
+        end
+        return unless server
+
+        server.safe_send(message) ? server : nil
+      end
+
+      private def disconnect_killed_local_user(target_nickname : String, oper_nickname : String, reason : String) : Nil
+        return unless target_client = @user_repository.get_client(target_nickname)
+
+        target_client.send_error("Killed by #{oper_nickname}: #{reason}")
+        target_client.close
+      rescue ClosedClient
       end
 
       # Kick user from channel with network sync

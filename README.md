@@ -18,6 +18,9 @@ A Crystal IRC server implementation that follows IRC protocol specifications. Wh
     joined channel, and hostmask plus realname masks
 * User information lookup (IP, hostname, WHOIS)
 * Activity and signon time tracking
+* IRC operator authentication with `OPER`
+* Oper-only administrative commands: `KILL`, `REHASH`, `CONNECT`, `SQUIT`,
+  `DIE`, and `RESTART`
 
 ### Network & Security
 * **SSL/TLS Support** - Secure connections for clients and servers
@@ -29,7 +32,6 @@ A Crystal IRC server implementation that follows IRC protocol specifications. Wh
 * Additional channel and user modes
 
 ### Not Implemented
-* IRC operator authentication and oper-only commands
 * Network-wide GLines
 * NickServ, ChanServ, and persistent IRC services
 
@@ -53,7 +55,46 @@ port: 6667
 network: "MyIRCNetwork"
 max_users: 100
 link_password: "server_link_password"
+allow_die: false
+allow_restart: false
 ```
+
+### IRC Operators
+
+IRC operators are configured with O-line style entries under `operators`.
+Clients authenticate with `OPER <name> <password>`. On success, CrIRCd sends
+`381 RPL_YOUREOPER` and sets user mode `+o` for global operators or `+O` for
+local operators. Users cannot grant themselves `+o` or `+O` with `MODE`; those
+modes must come from `OPER`, though users may remove their own operator mode.
+Operators can use `KILL <nickname> :<reason>` to disconnect users, `REHASH` to
+reload config, `CONNECT` to start a configured server link, and `SQUIT` to drop
+a server link. `DIE` and `RESTART` are disabled by default and require
+`allow_die: true` or `allow_restart: true`.
+
+Users can set `MODE <nick> +w` to receive wallops notices from linked servers.
+CrIRCd treats `WALLOPS` as a server-originated command and does not expose it as
+a client operator command.
+
+```yaml
+operators:
+  - name: "admin"
+    password: "change-this-password"
+    hosts:
+      - "*!admin@trusted.example.com"
+      - "trusted.example.com"
+
+  - name: "local-admin"
+    password: "change-this-too"
+    local: true
+    hosts:
+      - "localhost"
+      - "*!oper@127.0.0.1"
+```
+
+`hosts` is optional and defaults to `["*"]`. Host masks are matched
+case-insensitively with `*` and `?` wildcards against the user's hostmask,
+resolved hostname, and socket host string. Prefer restrictive host masks in
+production.
 
 ## Testing
 
@@ -155,13 +196,14 @@ CrIRCd currently supports these client-facing commands:
 * Messaging: `PRIVMSG`, `NOTICE`
 * Channels: `JOIN`, `PART`, `MODE`, `TOPIC`, `INVITE`, `KICK`, `NAMES`, `LIST`,
   `WHO`
+* Operator commands: `OPER`, `KILL`, `REHASH`, `CONNECT`, `SQUIT`, `DIE`,
+  `RESTART`
 * User/server queries: `WHOIS`, `LINKS`, `STATS`, `TIME`, `VERSION`, `ADMIN`
 
 Server-to-server links support handshake, burst, channel membership, user state,
 message routing, and basic server query propagation.
 
-Unsupported areas include IRC operator authentication, network GLines, and
-persistent IRC services.
+Unsupported areas include network GLines and persistent IRC services.
 
 ## Configuration Reload
 

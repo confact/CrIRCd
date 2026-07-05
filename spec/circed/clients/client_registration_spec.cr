@@ -41,6 +41,19 @@ describe Circed::Client do
     client.hostmask.should eq("Alice!alice@localhost")
   end
 
+  it "applies RFC USER mode bits during registration" do
+    socket = DummySocket.new
+    client = Circed::Client.new(socket.as(Circed::Network::SSLSocket::IRCSocket), [] of String)
+
+    Circed::Actions::Nick.call(client, "Alice")
+    client.user = ["alice", "12", "*", ":Alice Example"]
+
+    user = user_repository.get("Alice")
+    user.should_not be_nil
+    user.try(&.modes.includes?('w')).should be_true
+    user.try(&.modes.includes?('i')).should be_true
+  end
+
   it "batches queued client messages into a single socket write" do
     with_real_outbound_writer do
       socket = DummySocket.new

@@ -200,6 +200,27 @@ describe Circed::LinkServer do
         ex.message.should_not be_nil
       end
     end
+
+    it "handles user MODE replacements" do
+      link_server = Circed::LinkServer.allocate
+      Circed::Network::NetworkState.add_user("testnick", "testuser", "test.host.com", "Test User", "remote.server.com", 1)
+      user = Circed::Network::NetworkState.get_user("testnick")
+      user.should_not be_nil
+      user.try(&.modes.<<('o'))
+
+      payload = FastIRC::Message.new(
+        "MODE",
+        ["testnick", "-o+O"],
+        prefix: FastIRC::Prefix.new(source: "remote.server.com", user: nil, host: nil)
+      )
+
+      link_server.handle_mode_message(payload)
+
+      modes = Circed::Network::NetworkState.get_user("testnick").try(&.modes)
+      modes.should_not be_nil
+      modes.try(&.includes?('O')).should be_true
+      modes.try(&.includes?('o')).should be_false
+    end
   end
 
   describe "error handling" do

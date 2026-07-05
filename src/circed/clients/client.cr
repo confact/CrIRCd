@@ -100,7 +100,7 @@ module Circed
 
       # Create domain user in repository if we have a nickname
       if nickname = @nickname
-        register_domain_user(nickname, username, realname)
+        register_domain_user(nickname, username, realname, mode)
       end
 
       complete_registration
@@ -266,7 +266,7 @@ module Circed
       case payload.command
       when "LIST", "WHOIS", "WHO", "NAMES", "LINKS", "STATS", "TIME", "VERSION", "ADMIN"
         handle_query_commands(payload)
-      when "NICK", "USER", "AWAY", "CAP", "PASS"
+      when "NICK", "USER", "AWAY", "CAP", "PASS", "OPER"
         handle_user_commands(payload)
       when "PONG", "PING", "STARTTLS"
         handle_connection_commands(payload)
@@ -274,6 +274,8 @@ module Circed
         handle_channel_commands(payload)
       when "QUIT", "NOTICE", "PRIVMSG"
         handle_message_commands(payload)
+      when "KILL", "REHASH", "RESTART", "DIE", "CONNECT", "SQUIT"
+        handle_operator_commands(payload)
       else
         # Unknown command
         send_message(Server.clean_name, Numerics::ERR_UNKNOWNCOMMAND, nickname || "*", payload.command, ":#{Utils::IrcUtils::ErrorMessages::UNKNOWN_COMMAND}")
@@ -317,6 +319,8 @@ module Circed
       when "CAP"
         return if payload.params.empty?
         Actions::Cap.call(self, payload.params.first, payload.params[1]?)
+      when "OPER"
+        handle_oper_command(payload)
       end
     end
 
@@ -340,6 +344,12 @@ module Circed
       end
 
       Actions::Nick.call(self, payload.params.first)
+    end
+
+    private def handle_oper_command(payload : FastIRC::Message) : Nil
+      return unless require_param_count(payload, 2, "OPER")
+
+      Infrastructure::ServiceLocator.irc_service.oper(self, payload.params[0], payload.params[1])
     end
 
     private def handle_user_command(payload : FastIRC::Message) : Nil
@@ -450,6 +460,33 @@ module Circed
         target = payload.params.first
         message = joined_params(payload.params, 1)
         Actions::Privmsg.call(self, target, message)
+      end
+    end
+
+    private def handle_operator_commands(payload : FastIRC::Message)
+      irc_service = Infrastructure::ServiceLocator.irc_service
+
+      case payload.command
+      when "KILL"
+        return unless require_param_count(payload, 2, "KILL")
+
+        irc_service.kill_user(self, payload.params.first, joined_params(payload.params, 1).lchop(':'))
+      when "REHASH"
+        irc_service.rehash(self)
+      when "RESTART"
+        reason = payload.params.empty? ? "Restart requested" : joined_params(payload.params).lchop(':')
+        irc_service.restart(self, reason)
+      when "DIE"
+        reason = payload.params.empty? ? "Shutdown requested" : joined_params(payload.params).lchop(':')
+        irc_service.die(self, reason)
+      when "CONNECT"
+        return unless require_param_count(payload, 1, "CONNECT")
+
+        irc_service.connect_server(self, payload.params.first, payload.params[1]?.try(&.to_i?), payload.params[2]?)
+      when "SQUIT"
+        return unless require_param_count(payload, 2, "SQUIT")
+
+        irc_service.squit_server(self, payload.params.first, joined_params(payload.params, 1).lchop(':'))
       end
     end
 
@@ -670,7 +707,7 @@ module Circed
       Log.debug { "Socket is closed, can't send message" }
     end
 
-    private def register_domain_user(nickname : String, username : String, realname : String)
+    private def register_domain_user(nickname : String, username : String, realname : String, user_mode : String)
       hostname = get_hostname || @host || "localhost"
       domain_user = Domain::User.new(
         nickname,
@@ -679,8 +716,15 @@ module Circed
         realname,
         Server.name
       )
+      apply_registration_user_modes(domain_user, user_mode)
       Infrastructure::ServiceLocator.user_repository.add(nickname, domain_user)
       set_hostmask
+    end
+
+    private def apply_registration_user_modes(domain_user : Domain::User, user_mode : String) : Nil
+      mode_value = user_mode.to_i? || 0
+      domain_user.modes << 'w' if (mode_value & 4) != 0
+      domain_user.modes << 'i' if (mode_value & 8) != 0
     end
   end
 end
