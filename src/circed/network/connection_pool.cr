@@ -11,7 +11,7 @@ module Circed
       CLEANUP_INTERVAL = 5.minutes
 
       # Connection state tracking
-      private struct ConnectionInfo
+      private class ConnectionInfo
         getter server : LinkServer
         getter last_activity : Time
         getter? idle : Bool

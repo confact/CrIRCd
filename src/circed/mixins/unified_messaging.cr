@@ -64,7 +64,7 @@ module Circed
       # Collect unique users from these channels
       unique_users = Set(String).new
       user_channels.each do |channel|
-        channel.members.keys.each { |nickname| unique_users << nickname }
+        channel.members.each_key { |nickname| unique_users << nickname }
       end
 
       # Send to each unique user
@@ -175,7 +175,7 @@ module Circed
       unique_users = Set(String).new
 
       user_channels.each do |channel|
-        channel.members.keys.each { |nickname| unique_users << nickname }
+        channel.members.each_key { |nickname| unique_users << nickname }
       end
 
       unique_users.each do |nickname|

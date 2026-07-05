@@ -325,7 +325,7 @@ module Circed
         Network::NetworkState.add_user(new_nick, user.username, user.hostname, user.realname, user.server, user.hopcount)
 
         # Update channel memberships
-        Network::NetworkState.channels.each do |_, channel|
+        Network::NetworkState.channels.each_value do |channel|
           if channel.members.has_key?(old_nick)
             modes = channel.members.delete(old_nick)
             channel.members[new_nick] = modes if modes
@@ -666,18 +666,12 @@ module Circed
 
     private def deliver_to_local_channel(channel_name : String, payload, sender_nick : String, message : String)
       if channel = Network::NetworkState.get_channel(channel_name)
-        # Find local users in this channel
         user_repository = Infrastructure::ServiceLocator.user_repository
-        local_users = channel.members.keys.select do |nick|
-          user_repository.get_client(nick)
-        end
 
-        # Send message to each local user
-        local_users.each do |local_nick|
+        channel.members.each_key do |local_nick|
+          next if local_nick == sender_nick
+
           if client = user_repository.get_client(local_nick)
-            # Don't send message back to the sender if they're local
-            next if local_nick == sender_nick
-
             formatted_message = format_message_for_client(payload, message)
             client.send_message(formatted_message)
           end
@@ -806,11 +800,7 @@ module Circed
     private def send_to_local_channel_members(channel_name : String, message : String, exclude_nick : String? = nil)
       if channel = Network::NetworkState.get_channel(channel_name)
         user_repository = Infrastructure::ServiceLocator.user_repository
-        local_users = channel.members.keys.select do |nick|
-          user_repository.get_client(nick)
-        end
-
-        local_users.each do |local_nick|
+        channel.members.each_key do |local_nick|
           next if exclude_nick && local_nick == exclude_nick
 
           if client = user_repository.get_client(local_nick)
@@ -821,16 +811,13 @@ module Circed
     end
 
     private def send_quit_to_shared_local_users(remote_nick : String, message : String)
-      # Find all channels the remote user was in
-      affected_channels = Network::NetworkState.channels.select do |_, channel|
-        channel.members.has_key?(remote_nick)
-      end
-
       # Collect all local users who shared channels (avoid duplicates)
       user_repository = Infrastructure::ServiceLocator.user_repository
       local_users = Set(String).new
-      affected_channels.each do |_, channel|
-        channel.members.keys.each do |nick|
+      Network::NetworkState.channels.each_value do |channel|
+        next unless channel.members.has_key?(remote_nick)
+
+        channel.members.each_key do |nick|
           local_users << nick if user_repository.get_client(nick)
         end
       end
@@ -845,14 +832,12 @@ module Circed
 
     private def send_nick_to_shared_local_users(old_nick : String, message : String)
       # Similar to QUIT - find all local users who shared channels
-      affected_channels = Network::NetworkState.channels.select do |_, channel|
-        channel.members.has_key?(old_nick)
-      end
-
       user_repository = Infrastructure::ServiceLocator.user_repository
       local_users = Set(String).new
-      affected_channels.each do |_, channel|
-        channel.members.keys.each do |nick|
+      Network::NetworkState.channels.each_value do |channel|
+        next unless channel.members.has_key?(old_nick)
+
+        channel.members.each_key do |nick|
           local_users << nick if user_repository.get_client(nick)
         end
       end

@@ -29,7 +29,7 @@ module Circed
     end
 
     private def self.split_list_param(param : String) : Array(String)
-      param.split(',').reject(&.empty?)
+      param.split(',', remove_empty: true)
     end
   end
 end

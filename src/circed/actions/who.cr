@@ -37,8 +37,7 @@ module Circed
       # Send WHO replies for each member
       channel.members.each do |nickname, modes|
         if client = user_repo.get_client(nickname)
-          mode_strings = modes.map(&.to_s)
-          send_who_reply(sender, client, channel, mode_strings)
+          send_who_reply(sender, client, channel, modes)
         end
       end
 
@@ -51,9 +50,8 @@ module Circed
       if client = user_repo.get_client(target)
         # Find a common channel or just send basic info
         channel = find_common_channel(sender, client)
-        modes = [] of String
 
-        send_who_reply(sender, client, channel, modes)
+        send_who_reply(sender, client, channel)
       end
 
       send_end_of_who(sender, target)
@@ -91,25 +89,12 @@ module Circed
       nil
     end
 
-    private def self.send_who_reply(sender : Client, client : Client, channel : Domain::Channel? = nil, modes : Array(String) = [] of String)
+    private def self.send_who_reply(sender : Client, client : Client, channel : Domain::Channel? = nil, modes : Set(Char)? = nil)
       # WHO reply format:
       # :server 352 nick channel username host server nick flags :hopcount realname
 
       user = client.user
       return unless user
-
-      # Build flags
-      flags = "H"                                        # Here (not away)
-      flags += "*" if client.nickname == sender.nickname # Self
-
-      # Add channel operator status if in a channel
-      if channel
-        if modes.includes?("o")
-          flags += "@"
-        elsif modes.includes?("v")
-          flags += "+"
-        end
-      end
 
       # Channel name or "*" if no channel
       channel_name = channel ? channel.name : "*"
@@ -126,9 +111,25 @@ module Circed
         hostname,
         Server.clean_name,
         client.nickname || "*",
-        flags,
+        who_flags(sender, client, channel, modes),
         ":0 #{user.realname}"
       )
+    end
+
+    private def self.who_flags(sender : Client, client : Client, channel : Domain::Channel?, modes : Set(Char)?) : String
+      flags = "H"
+      flags += "*" if client.nickname == sender.nickname
+      if channel && (prefix = channel_mode_prefix(modes))
+        flags += prefix.to_s
+      end
+      flags
+    end
+
+    private def self.channel_mode_prefix(modes : Set(Char)?) : Char?
+      return nil unless modes
+
+      return '@' if modes.includes?('o')
+      return '+' if modes.includes?('v')
     end
 
     private def self.send_end_of_who(sender : Client, target : String)

@@ -380,10 +380,6 @@ module Circed
       client.send_message(Server.clean_name, Numerics::RPL_YOURHOST, client.nickname, ":Your host is #{Server.config.host}, running version #{VERSION}")
       client.send_message(Server.clean_name, Numerics::RPL_CREATED, client.nickname, ":This server was created on #{Server.start_time}")
       client.send_message(Server.clean_name, Numerics::RPL_MYINFO, client.nickname, "#{Server.config.host} #{VERSION} oiwszcrkfydnxbauglZCD biklmnopstvrDdRcC bkloveqjfI")
-
-      # Sync new user with network state
-      irc_service = Infrastructure::ServiceLocator.irc_service
-      irc_service.sync_new_user(client)
     end
 
     def self.lusers(client : Client)
