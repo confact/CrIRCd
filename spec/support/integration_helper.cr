@@ -54,7 +54,6 @@ module IntegrationHelper
           wait_until_stopped
         end
         proc.wait rescue nil
-        sleep 1.second
         @process = nil
       end
     end
@@ -422,11 +421,21 @@ module IntegrationHelper
 
   # Test environment manager with automatic setup/teardown
   class TestEnvironment
+    @@server_binary_ready = false
+
     getter servers = [] of TestServer
     getter clients = [] of TestClient
+    getter server1_client_port = 16697
+    getter server2_client_port = 17697
+
+    @default_client_ssl = true
 
     def setup_single_server(ssl_enabled = true)
       ensure_setup
+      @server1_client_port = ssl_enabled ? 16697 : 16667
+      @server2_client_port = ssl_enabled ? 17697 : 17667
+      @default_client_ssl = ssl_enabled
+
       # Create SSL certificates if needed
       setup_ssl_certs if ssl_enabled
 
@@ -445,8 +454,14 @@ module IntegrationHelper
 
     def setup_linked_servers(ssl_enabled = true)
       ensure_setup
+      @server1_client_port = ssl_enabled ? 16697 : 16667
+      @server2_client_port = ssl_enabled ? 17697 : 17667
+      @default_client_ssl = ssl_enabled
+
       # Create SSL certificates if needed
       setup_ssl_certs if ssl_enabled
+      server1_link_port = ssl_enabled ? 16697 : 16667
+      server2_link_port = ssl_enabled ? 17697 : 17667
 
       # Configure Server 1
       ConfigBuilder.build("test_server1") do |config|
@@ -454,7 +469,7 @@ module IntegrationHelper
         config.ssl_enabled(ssl_enabled)
         config.ssl_port(16697)
         config.ssl_cert("spec/fixtures/ssl/server1/server.crt", "spec/fixtures/ssl/server1/server.key") if ssl_enabled
-        config.add_linked_server("localhost", 17697, ssl_enabled)
+        config.add_linked_server("localhost", server2_link_port, ssl_enabled)
       end
 
       # Configure Server 2
@@ -463,7 +478,7 @@ module IntegrationHelper
         config.ssl_enabled(ssl_enabled)
         config.ssl_port(17697)
         config.ssl_cert("spec/fixtures/ssl/server2/server.crt", "spec/fixtures/ssl/server2/server.key") if ssl_enabled
-        config.add_linked_server("localhost", 16697, ssl_enabled)
+        config.add_linked_server("localhost", server1_link_port, ssl_enabled)
       end
 
       # Start servers
@@ -475,12 +490,16 @@ module IntegrationHelper
       server1.start
       server2.start
 
-      # Wait for link establishment
-      sleep 1.second
+      wait_for_link_establishment(server1, server2)
     end
 
-    def create_client(nickname : String, port : Int32 = 16697, ssl : Bool = true) : TestClient
-      client = TestClient.new(nickname, "localhost", port, ssl)
+    def create_client(nickname : String, port : Int32? = nil, ssl : Bool? = nil) : TestClient
+      client = TestClient.new(
+        nickname,
+        "localhost",
+        normalize_client_port(port || @server1_client_port),
+        ssl.nil? ? @default_client_ssl : ssl
+      )
       clients << client
       client
     end
@@ -498,9 +517,7 @@ module IntegrationHelper
       Dir.mkdir_p("spec/fixtures")
       Dir.mkdir_p("spec/logs")
 
-      # Kill any leftover processes
-      system("pkill -f 'circed_test.*spec/fixtures' 2>/dev/null || true")
-      sleep 0.5.seconds
+      return if @@server_binary_ready && File.exists?("./circed_test")
 
       # Build server if needed (rebuild if any src file is newer than the binary)
       needs_build = true
@@ -515,6 +532,8 @@ module IntegrationHelper
         result = system("crystal build src/circed.cr -o circed_test")
         raise "Failed to build server" unless result
       end
+
+      @@server_binary_ready = true
     end
 
     private def setup_ssl_certs
@@ -549,13 +568,38 @@ module IntegrationHelper
       Dir["spec/fixtures/*.yml"].each { |file| File.delete(file) rescue nil }
       Dir["spec/logs/*.log"].each { |file| File.delete(file) rescue nil }
     end
+
+    private def normalize_client_port(port : Int32) : Int32
+      return 16667 if !@default_client_ssl && port == 16697
+      return 17667 if !@default_client_ssl && port == 17697
+
+      port
+    end
+
+    private def wait_for_link_establishment(server1 : TestServer, server2 : TestServer, timeout : Time::Span = 3.seconds) : Nil
+      wait_for_log(server1.log_file, /Received end of burst from test_server2/, timeout)
+      wait_for_log(server2.log_file, /Received end of burst from localhost/, timeout)
+    end
+
+    private def wait_for_log(log_file : String, pattern : Regex, timeout : Time::Span) : Nil
+      deadline = Time.monotonic + timeout
+
+      loop do
+        if File.exists?(log_file) && File.read(log_file).matches?(pattern)
+          return
+        end
+
+        raise "Timed out waiting for #{pattern} in #{log_file}" if Time.monotonic > deadline
+
+        sleep 0.02.seconds
+      end
+    end
   end
 
   # Global test setup and cleanup hooks
   Spec.before_suite do
     # Ensure clean state before any integration tests
     system("pkill -f 'circed_test.*spec/fixtures' 2>/dev/null || true")
-    sleep 1.second
   end
 
   Spec.after_suite do

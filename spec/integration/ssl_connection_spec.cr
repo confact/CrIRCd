@@ -49,8 +49,6 @@ describe "SSL Connection Integration" do
         end
       end
 
-      sleep 0.5.seconds # Give server time to start
-
       # Test SSL connection
       begin
         ssl_context = OpenSSL::SSL::Context::Client.new

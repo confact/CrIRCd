@@ -27,8 +27,16 @@ describe "Smoke Test" do
     )
     puts "Server PID: #{process.pid}"
 
-    # Wait a bit
-    sleep 2.seconds
+    deadline = Time.monotonic + 2.seconds
+    until Time.monotonic > deadline
+      begin
+        socket = TCPSocket.new("localhost", 19999)
+        socket.close
+        break
+      rescue IO::Error
+        sleep 0.05.seconds
+      end
+    end
 
     # Check if running
     running = Process.exists?(process.pid)
@@ -38,7 +46,7 @@ describe "Smoke Test" do
 
     # Clean up
     process.signal(Signal::TERM)
-    sleep 0.5.seconds
+    process.wait rescue nil
 
     File.delete("test_smoke.yml")
   end

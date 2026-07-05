@@ -20,21 +20,17 @@ describe "Basic Connectivity" do
     socket.flush
 
     # Read responses - should get welcome messages
-    sleep 1.second
     responses = [] of String
-    socket.read_timeout = 1.second
+    deadline = Time.monotonic + 1.second
+    socket.read_timeout = 0.1.seconds
 
-    5.times do
+    until responses.any?(&.includes?("001")) || Time.monotonic > deadline
       begin
         if line = socket.gets(chomp: false)
           responses << line
           puts "Response: #{line.inspect}"
-        else
-          break
         end
       rescue IO::TimeoutError
-        puts "Timeout reading response"
-        break
       end
     end
 

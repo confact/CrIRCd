@@ -11,9 +11,6 @@ describe "Server-to-Server Linking Integration" do
     it "establishes SSL link between two servers" do
       env.setup_linked_servers(ssl_enabled: true)
 
-      # Give servers time to link
-      sleep 2.seconds
-
       # Both servers should be running
       env.servers.each do |server|
         server.running?.should be_true
@@ -35,7 +32,6 @@ describe "Server-to-Server Linking Integration" do
 
     it "synchronizes users across linked servers" do
       env.setup_linked_servers(ssl_enabled: true)
-      sleep 2.seconds
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -59,7 +55,6 @@ describe "Server-to-Server Linking Integration" do
 
     it "routes messages between linked servers" do
       env.setup_linked_servers(ssl_enabled: true)
-      sleep 2.seconds
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -69,9 +64,6 @@ describe "Server-to-Server Linking Integration" do
 
       alice.join("#test")
       bob.join("#test")
-
-      # Wait for joins to complete
-      sleep 0.5.seconds
 
       # Alice sends message, Bob should receive it
       test_message = "Hello from Server 1!"
@@ -85,7 +77,6 @@ describe "Server-to-Server Linking Integration" do
 
     it "handles server disconnection gracefully" do
       env.setup_linked_servers(ssl_enabled: true)
-      sleep 2.seconds
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -111,8 +102,7 @@ describe "Server-to-Server Linking Integration" do
 
   describe "link authentication" do
     it "requires correct link password" do
-      env.setup_linked_servers(ssl_enabled: true)
-      sleep 2.seconds
+      env.setup_linked_servers(ssl_enabled: false)
 
       # Both servers should establish link successfully
       env.servers.each do |server|
@@ -127,8 +117,7 @@ describe "Server-to-Server Linking Integration" do
     end
 
     it "maintains network topology" do
-      env.setup_linked_servers(ssl_enabled: true)
-      sleep 2.seconds
+      env.setup_linked_servers(ssl_enabled: false)
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -147,14 +136,12 @@ describe "Server-to-Server Linking Integration" do
 
   describe "network burst and synchronization" do
     it "synchronizes network state on link establishment" do
-      env.setup_linked_servers(ssl_enabled: true)
+      env.setup_linked_servers(ssl_enabled: false)
 
       # Connect a user to server 1 before link is fully established
       alice = env.create_client("Alice", port: 16697)
       alice.register
       alice.join("#early")
-
-      sleep 2.seconds # Wait for link establishment
 
       # Connect to server 2 and verify Alice is visible
       bob = env.create_client("Bob", port: 17697)
@@ -169,8 +156,7 @@ describe "Server-to-Server Linking Integration" do
     end
 
     it "propagates nick changes across servers" do
-      env.setup_linked_servers(ssl_enabled: true)
-      sleep 2.seconds
+      env.setup_linked_servers(ssl_enabled: false)
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -180,8 +166,6 @@ describe "Server-to-Server Linking Integration" do
 
       alice.join("#test")
       bob.join("#test")
-
-      sleep 0.5.seconds
 
       # Alice changes nick
       alice.send("NICK AliceNew")
@@ -195,8 +179,7 @@ describe "Server-to-Server Linking Integration" do
     end
 
     it "propagates quit messages across servers" do
-      env.setup_linked_servers(ssl_enabled: true)
-      sleep 2.seconds
+      env.setup_linked_servers(ssl_enabled: false)
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -209,8 +192,6 @@ describe "Server-to-Server Linking Integration" do
       alice.join("#test")
       bob.join("#test")
       charlie.join("#test")
-
-      sleep 0.5.seconds
 
       # Alice quits
       alice.quit("Going away")

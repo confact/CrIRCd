@@ -159,6 +159,7 @@ module Circed
 
       apply_resolved_hostname
       self.registered = true
+      Infrastructure::ServiceLocator.irc_service.sync_new_user(self)
 
       # Send welcome messages
       Server.welcome_message(self)

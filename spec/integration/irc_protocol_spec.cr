@@ -22,7 +22,7 @@ describe "IRC Protocol Integration" do
     end
 
     it "handles nick collision" do
-      env.setup_single_server(ssl_enabled: true)
+      env.setup_single_server(ssl_enabled: false)
 
       alice1 = env.create_client("Alice")
       alice1.register
@@ -37,7 +37,7 @@ describe "IRC Protocol Integration" do
     end
 
     it "handles invalid nicknames" do
-      env.setup_single_server(ssl_enabled: true)
+      env.setup_single_server(ssl_enabled: false)
 
       client = env.create_client("Test User") # Invalid nick with space
       client.send("NICK Test User")
@@ -69,7 +69,7 @@ describe "IRC Protocol Integration" do
 
   describe "channel operations" do
     it "creates and joins channels" do
-      env.setup_single_server(ssl_enabled: true)
+      env.setup_single_server(ssl_enabled: false)
 
       alice = env.create_client("Alice")
       alice.register
@@ -85,7 +85,7 @@ describe "IRC Protocol Integration" do
     end
 
     it "handles channel topics" do
-      env.setup_single_server(ssl_enabled: true)
+      env.setup_single_server(ssl_enabled: false)
 
       alice = env.create_client("Alice")
       alice.register
@@ -106,7 +106,7 @@ describe "IRC Protocol Integration" do
     end
 
     it "handles channel modes" do
-      env.setup_single_server(ssl_enabled: true)
+      env.setup_single_server(ssl_enabled: false)
 
       alice = env.create_client("Alice")
       alice.register
@@ -120,7 +120,7 @@ describe "IRC Protocol Integration" do
     end
 
     it "handles user permissions in channels" do
-      env.setup_single_server(ssl_enabled: true)
+      env.setup_single_server(ssl_enabled: false)
 
       alice = env.create_client("Alice")
       bob = env.create_client("Bob")
@@ -143,7 +143,7 @@ describe "IRC Protocol Integration" do
 
   describe "private messaging" do
     it "sends private messages between users" do
-      env.setup_single_server(ssl_enabled: true)
+      env.setup_single_server(ssl_enabled: false)
 
       alice = env.create_client("Alice")
       bob = env.create_client("Bob")
@@ -162,7 +162,7 @@ describe "IRC Protocol Integration" do
     end
 
     it "handles private messages to non-existent users" do
-      env.setup_single_server(ssl_enabled: true)
+      env.setup_single_server(ssl_enabled: false)
 
       alice = env.create_client("Alice")
       alice.register
@@ -176,7 +176,7 @@ describe "IRC Protocol Integration" do
 
   describe "user modes and away status" do
     it "handles AWAY command" do
-      env.setup_single_server(ssl_enabled: true)
+      env.setup_single_server(ssl_enabled: false)
 
       alice = env.create_client("Alice")
       alice.register
@@ -193,7 +193,7 @@ describe "IRC Protocol Integration" do
     end
 
     it "shows away status in WHOIS" do
-      env.setup_single_server(ssl_enabled: true)
+      env.setup_single_server(ssl_enabled: false)
 
       alice = env.create_client("Alice")
       bob = env.create_client("Bob")

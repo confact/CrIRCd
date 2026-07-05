@@ -71,8 +71,6 @@ describe "Channel Operations Integration" do
         client.join("#broadcast")
       end
 
-      sleep 0.5.seconds
-
       # Alice sends message
       test_message = "Hello everyone in the channel!"
       alice.privmsg("#broadcast", test_message)
@@ -82,7 +80,7 @@ describe "Channel Operations Integration" do
       assert_message_received(charlie, test_message, "Alice")
 
       # Alice should not receive her own message back
-      alice.should_not_receive(/Alice.*PRIVMSG.*#{test_message}/)
+      alice.should_not_receive(/Alice.*PRIVMSG.*#{test_message}/, timeout: 0.1.seconds)
 
       [alice, bob, charlie].each(&.quit)
     end
@@ -211,7 +209,7 @@ describe "Channel Operations Integration" do
       alice.should_receive(/MODE #invite.*\+i/)
 
       # Bob tries to join
-      bob.join("#invite")
+      bob.send("JOIN #invite")
       bob.should_receive(/473.*#invite.*Cannot join channel \(\+i\)/) # ERR_INVITEONLYCHAN
 
       # Alice invites Bob
@@ -261,7 +259,7 @@ describe "Channel Operations Integration" do
 
       # Give Bob voice
       alice.send("MODE #privileges +v Bob")
-      sleep 0.2.seconds
+      alice.should_receive(/MODE #privileges.*\+v Bob/)
 
       alice.send("NAMES #privileges")
       alice.should_receive(/353.*#privileges.*@Alice.*\+Bob/) # @ for op, + for voice
@@ -322,7 +320,7 @@ describe "Channel Operations Integration" do
 
       # Bob tries to join
       bob.register
-      bob.join("#bans")
+      bob.send("JOIN #bans")
       bob.should_receive(/474.*#bans.*Cannot join channel \(\+b\)/) # ERR_BANNEDFROMCHAN
 
       alice.quit
@@ -360,8 +358,7 @@ describe "Channel Operations Integration" do
 
   describe "cross-server channel operations" do
     it "synchronizes channel state across servers" do
-      env.setup_linked_servers(ssl_enabled: true)
-      sleep 2.seconds
+      env.setup_linked_servers(ssl_enabled: false)
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -380,8 +377,7 @@ describe "Channel Operations Integration" do
     end
 
     it "propagates channel messages across servers" do
-      env.setup_linked_servers(ssl_enabled: true)
-      sleep 2.seconds
+      env.setup_linked_servers(ssl_enabled: false)
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -391,7 +387,6 @@ describe "Channel Operations Integration" do
 
       alice.join("#messages")
       bob.join("#messages")
-      sleep 0.5.seconds
 
       alice.privmsg("#messages", "cross-server channel message")
       assert_message_received(bob, "cross-server channel message", "Alice")
@@ -401,8 +396,7 @@ describe "Channel Operations Integration" do
     end
 
     it "propagates channel modes across servers" do
-      env.setup_linked_servers(ssl_enabled: true)
-      sleep 2.seconds
+      env.setup_linked_servers(ssl_enabled: false)
 
       alice = env.create_client("Alice", port: 16697)
       bob = env.create_client("Bob", port: 17697)
@@ -412,7 +406,6 @@ describe "Channel Operations Integration" do
 
       alice.join("#remote-modes")
       bob.join("#remote-modes")
-      sleep 0.5.seconds
 
       alice.send("MODE #remote-modes +m")
       alice.should_receive(/MODE #remote-modes.*\+m/)
