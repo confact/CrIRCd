@@ -28,6 +28,14 @@ describe Circed::Actions::Mode do
     channel.try(&.members["Bob"].includes?('o')).should be_true
   end
 
+  it "accepts RFC1459-equivalent casing for a user's own modes" do
+    sender = create_test_client("Alice[One]")
+
+    Circed::Actions::Mode.call(sender, ["aLICE{oNE}", "+i"])
+
+    user_repository["Alice[One]"]?.try(&.modes.includes?('i')).should be_true
+  end
+
   it "sets a channel mode" do
     sender = create_test_client("Alice")
     channel_name = "#test"

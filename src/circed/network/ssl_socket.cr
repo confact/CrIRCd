@@ -44,12 +44,12 @@ module Circed
       end
 
       # Create client SSL context for outgoing server connections
-      def self.create_client_context(config : Config::SSLConfig) : OpenSSL::SSL::Context::Client
+      def self.create_client_context(config : Config::SSLConfig? = nil, *, verify_mode : Bool = false) : OpenSSL::SSL::Context::Client
         context = OpenSSL::SSL::Context::Client.new
 
         # Set certificate and key if provided (for mutual TLS)
-        cert_file = config.cert_file
-        key_file = config.key_file
+        cert_file = config.try(&.cert_file)
+        key_file = config.try(&.key_file)
         if cert_file && key_file
           context.certificate_chain = cert_file
           context.private_key = key_file
@@ -67,9 +67,9 @@ module Circed
         context.ciphers = "ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!MD5:!DSS"
 
         # Verify mode for server certificate
-        if config.verify_mode?
+        if verify_mode || config.try(&.verify_mode?)
           context.verify_mode = OpenSSL::SSL::VerifyMode::PEER
-          if ca_file = config.ca_file
+          if ca_file = config.try(&.ca_file)
             context.ca_certificates = ca_file
           end
         else
@@ -86,13 +86,12 @@ module Circed
 
       # Wrap a client socket with SSL
       def self.wrap_client_socket(tcp_socket : TCPSocket, context : OpenSSL::SSL::Context::Client, hostname : String? = nil) : OpenSSL::SSL::Socket::Client
-        ssl_socket = OpenSSL::SSL::Socket::Client.new(tcp_socket, context, sync_close: true, hostname: hostname)
-        ssl_socket
+        OpenSSL::SSL::Socket::Client.new(tcp_socket, context, sync_close: true, hostname: hostname)
       end
 
       # Check if a socket supports STARTTLS upgrade
       def self.can_start_tls?(socket : IRCSocket) : Bool
-        !socket.is_a?(OpenSSL::SSL::Socket::Server) && !socket.is_a?(OpenSSL::SSL::Socket::Client)
+        !ssl?(socket)
       end
 
       # Upgrade a plain socket to SSL (STARTTLS)
@@ -108,11 +107,7 @@ module Circed
       # Get peer certificate info for logging/validation
       def self.get_peer_info(socket : IRCSocket) : String?
         case socket
-        when OpenSSL::SSL::Socket::Server
-          if cert = socket.peer_certificate
-            return "CN=#{cert.subject}"
-          end
-        when OpenSSL::SSL::Socket::Client
+        when OpenSSL::SSL::Socket::Server, OpenSSL::SSL::Socket::Client
           if cert = socket.peer_certificate
             return "CN=#{cert.subject}"
           end

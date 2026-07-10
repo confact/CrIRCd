@@ -2,8 +2,6 @@ require "./base_action"
 
 module Circed
   class Actions::Cap < Actions::BaseAction
-    SUPPORTED_CAPS = [] of String
-
     protected def self.execute_action(sender : Client, subcommand : String, capabilities : String? = nil) : Nil
       case subcommand.upcase
       when "LS"
@@ -19,7 +17,7 @@ module Circed
         # List currently enabled capabilities
         handle_cap_list(sender)
       else
-        send_error(sender, Numerics::ERR_UNKNOWNCOMMAND, "CAP", ":Unknown CAP subcommand")
+        sender.send_message(Server.clean_name, Numerics::ERR_UNKNOWNCOMMAND, sender.nickname || "*", "CAP", ":Unknown CAP subcommand")
       end
     end
 
@@ -27,16 +25,8 @@ module Circed
       true
     end
 
-    private def self.handle_cap_ls(sender : Client, version : String?)
-      caps_string = SUPPORTED_CAPS.join(" ")
-
-      if version && version.to_i >= 302
-        # Multi-line LS response for CAP 302+ - end with final message
-        sender.send_message(Server.clean_name, "CAP", "*", "LS", ":#{caps_string}")
-      else
-        # Single-line LS response
-        sender.send_message(Server.clean_name, "CAP", "*", "LS", ":#{caps_string}")
-      end
+    private def self.handle_cap_ls(sender : Client, _version : String?)
+      sender.send_message(Server.clean_name, "CAP", "*", "LS", ":")
 
       # Note: Don't auto-complete registration here
       # Let the client send NICK and USER commands first, then complete registration
@@ -46,29 +36,7 @@ module Circed
     private def self.handle_cap_req(sender : Client, capabilities : String?)
       return unless capabilities
 
-      requested_caps = capabilities.split(" ")
-
-      # Check which capabilities we can support
-      ack_caps = [] of String
-      nak_caps = [] of String
-
-      requested_caps.each do |cap|
-        if SUPPORTED_CAPS.includes?(cap)
-          ack_caps << cap
-        else
-          nak_caps << cap
-        end
-      end
-
-      # Send ACK for supported capabilities
-      unless ack_caps.empty?
-        sender.send_message(Server.clean_name, "CAP", "*", "ACK", ":#{ack_caps.join(" ")}")
-      end
-
-      # Send NAK for unsupported capabilities
-      unless nak_caps.empty?
-        sender.send_message(Server.clean_name, "CAP", "*", "NAK", ":#{nak_caps.join(" ")}")
-      end
+      sender.send_message(Server.clean_name, "CAP", "*", "NAK", ":#{capabilities}")
     end
 
     private def self.handle_cap_end(sender : Client)

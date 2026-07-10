@@ -1,8 +1,8 @@
 require "spec"
 require "fast_irc"
-require "./support/**"
 ENV["CIRCED_TEST"] = "true"
 require "../src/circed"
+require "./support/**"
 
 # Initialize container for tests
 Circed::Infrastructure::Container.setup_default_services(Circed::Server.config)
@@ -20,7 +20,7 @@ def create_test_client(nickname : String) : Circed::Client
 
   # Create a domain user as well
   domain_user = Circed::Domain::User.new(nickname, "test", "localhost", nickname, "test_server")
-  user_repository.add(nickname, domain_user)
+  user_repository[nickname] = domain_user
   client.set_hostmask
 
   # Add client to user repository directly instead of through UserHandler

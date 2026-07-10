@@ -18,7 +18,9 @@ module Circed
 
       # Check if nickname is already in use (local or remote)
       user_repo = user_repository
-      if user_repo.has_client?(new_nickname) || Network::NetworkState.get_user(new_nickname)
+      same_user = old_nickname.try { |nickname| Domain::CaseMapping.same?(nickname, new_nickname) } || false
+      if !same_user && (user_repo.has_client?(new_nickname) || Network::NetworkState.get_user(new_nickname) ||
+         Network::NetworkState.nickname_reserved?(new_nickname))
         Utils::IrcUtils.send_nickname_in_use_error(sender, new_nickname)
         return
       end
@@ -39,7 +41,7 @@ module Circed
             user_info.realname,
             Server.name
           )
-          user_repo.add(new_nickname, domain_user)
+          user_repo[new_nickname] = domain_user
           sender.set_hostmask
         end
 

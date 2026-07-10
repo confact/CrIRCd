@@ -45,13 +45,36 @@ describe Circed::Domain::Channel do
     channel.modes.should contain('s')
   end
 
+  it "hides secret channels from non-members" do
+    channel = Circed::Domain::Channel.new("#test")
+    channel.modes << 's'
+    channel.add_member("Alice")
+
+    channel.visible_to?("Alice").should be_true
+    channel.visible_to?("Bob").should be_false
+    channel.visible_to?(nil).should be_false
+  end
+
+  it "hides private channels and keeps private and secret modes exclusive" do
+    channel = Circed::Domain::Channel.new("#test")
+    channel.add_member("Alice")
+    channel.apply_modes("+p", [] of String)
+
+    channel.visible_to?("Alice").should be_true
+    channel.visible_to?("Bob").should be_false
+
+    channel.apply_modes("+s", [] of String)
+    channel.private?.should be_false
+    channel.secret?.should be_true
+  end
+
   it "should be able to manage user modes in channel" do
     channel = Circed::Domain::Channel.new("#test")
     channel.add_member("Alice")
     channel.members["Alice"] << 'o' # Make operator
     channel.members["Alice"].should contain('o')
     # Note: operators method doesn't exist, but we can verify the user has 'o' mode
-    channel.user_modes("Alice").should contain('o')
+    channel.members["Alice"].should contain('o')
   end
 
   it "should be able to manage topic" do
@@ -70,11 +93,15 @@ describe Circed::Domain::Channel do
     channel.invite_list.should be_empty
     channel.ban_list.should be_empty
 
-    channel.invite_list << "Alice"
-    channel.ban_list << "Evil*"
+    2.times do
+      channel.add_invite("Alice")
+      channel.add_ban("Evil*")
+    end
 
-    channel.invite_list.should contain("Alice")
-    channel.ban_list.should contain("Evil*")
+    channel.invite_list.should eq(Set{"alice"})
+    channel.invited?("ALICE").should be_true
+    channel.remove_invite("aLiCe").should be_true
+    channel.ban_list.should eq(Set{"Evil*"})
   end
 
   describe "ban matching" do
@@ -93,6 +120,7 @@ describe Circed::Domain::Channel do
         "TroubleNick",
         "alice",
         "host.example",
+        "192.0.2.10",
         "Blocked Realname",
         "TroubleNick!alice@host.example",
         ["#lobby"]
@@ -120,6 +148,7 @@ describe Circed::Domain::Channel do
         "Alice",
         "alice",
         "host.example",
+        "192.0.2.10",
         "Blocked Realname",
         "Alice!alice@host.example",
         ["#holding", "#lobby"]
@@ -139,6 +168,7 @@ describe Circed::Domain::Channel do
         "Alice",
         "alice",
         "host.example",
+        "192.0.2.10",
         "Blocked Realname",
         "Alice!alice@host.example",
         ["#lobby"]

@@ -6,49 +6,20 @@ module Circed
       nickname = sender.nickname
       return unless nickname
 
-      user_repo = user_repository
-      user = user_repo.get(nickname)
-
-      unless user
+      unless user = user_repository[nickname]?
         Utils::IrcUtils.send_no_such_nick_error(sender, nickname)
         return
       end
 
-      if away_message.nil? || away_message.empty?
-        # User is coming back (unaway)
-        user.away_message = nil
-
-        # Send RPL_UNAWAY
-        sender.send_message(
-          Server.clean_name,
-          Numerics::RPL_UNAWAY,
-          nickname,
-          ":You are no longer marked as being away"
-        )
-
-        # Propagate to network
-        propagate_away_to_network(sender, nil)
-      else
-        # User is going away
-        user.away_message = away_message
-
-        # Send RPL_NOWAWAY
-        sender.send_message(
-          Server.clean_name,
-          Numerics::RPL_NOWAWAY,
-          nickname,
-          ":You have been marked as being away"
-        )
-
-        # Propagate to network
-        propagate_away_to_network(sender, away_message)
-      end
-
-      # Update user repository
-      user_repo.add(nickname, user)
+      away_message = nil if away_message.try(&.empty?)
+      user.away_message = away_message
+      numeric = away_message ? Numerics::RPL_NOWAWAY : Numerics::RPL_UNAWAY
+      status = away_message ? "You have been marked as being away" : "You are no longer marked as being away"
+      sender.send_message(Server.clean_name, numeric, nickname, ":#{status}")
+      propagate_away_to_network(sender, away_message)
 
       # Update network state
-      sync_away_with_network(nickname, away_message)
+      Network::NetworkState.set_user_away(nickname, away_message)
     end
 
     private def self.propagate_away_to_network(sender : Client, away_message : String?)
@@ -61,13 +32,6 @@ module Circed
 
       ServerHandler.servers.each do |server|
         server.safe_send(message)
-      end
-    end
-
-    private def self.sync_away_with_network(nickname : String, away_message : String?)
-      # Update network state with away status
-      if user = Network::NetworkState.get_user(nickname)
-        user.away_message = away_message
       end
     end
   end

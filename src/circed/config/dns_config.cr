@@ -2,7 +2,7 @@ require "yaml"
 
 module Circed
   class Config
-    class DNSConfig
+    struct DNSConfig
       include YAML::Serializable
 
       getter? enabled : Bool = true

@@ -9,7 +9,7 @@ module Circed
       irc_service = Infrastructure::ServiceLocator.irc_service
 
       if mode_change?(message)
-        irc_service.change_mode(sender, target, message[1], mode_params(message))
+        irc_service.change_mode(sender, target, message[1], message, 2)
       else
         irc_service.query_mode(sender, target)
       end
@@ -17,10 +17,6 @@ module Circed
 
     private def self.mode_change?(message : Array(String)) : Bool
       message.size > 1 && (message[1].starts_with?("+") || message[1].starts_with?("-"))
-    end
-
-    private def self.mode_params(message : Array(String)) : Array(String)
-      message.size > 2 ? message[2..] : [] of String
     end
   end
 end

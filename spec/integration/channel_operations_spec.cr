@@ -104,7 +104,7 @@ describe "Channel Operations Integration" do
       bob.quit
     end
 
-    it "prevents messages to channels user is not in" do
+    it "prevents external messages when the channel is +n" do
       env.setup_single_server(ssl_enabled: false)
 
       alice = env.create_client("Alice", port: 16667, ssl: false)
@@ -114,6 +114,8 @@ describe "Channel Operations Integration" do
       bob.register
 
       alice.join("#private")
+      alice.send("MODE #private +n")
+      alice.should_receive(/MODE #private \+n/)
       # Bob doesn't join
 
       bob.privmsg("#private", "I shouldn't be able to send this")

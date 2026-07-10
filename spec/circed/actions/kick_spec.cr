@@ -74,4 +74,16 @@ describe Circed::Actions::Kick do
     user_in_channel?(channel_name, "Bob").should be_false
     user_in_channel?(channel_name, "Carol").should be_false
   end
+
+  it "uses ERR_USERNOTINCHANNEL when the target is absent" do
+    sender = create_test_client("Alice")
+    create_test_client("Bob")
+    channel = create_test_channel("#test")
+    channel.add_member("Alice")
+    channel.members["Alice"] << 'o'
+
+    Circed::Actions::Kick.call(sender, ["#test", "Bob"])
+
+    sender.socket.as(DummySocket).sent_data.join.should contain(" 441 Alice Bob #test :They aren't on that channel")
+  end
 end

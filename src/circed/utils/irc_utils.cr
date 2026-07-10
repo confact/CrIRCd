@@ -25,6 +25,7 @@ module Circed
       # Channel validation utilities
       def self.valid_channel_name?(channel_name : String) : Bool
         return false if channel_name.empty?
+        return false if channel_name.bytesize > 50
         return false unless "#&+!".includes?(channel_name[0])
         return false if channel_name.includes?(' ') || channel_name.includes?(',') || channel_name.includes?('\a')
         return false if channel_name.includes?('\0') || channel_name.includes?('\r') || channel_name.includes?('\n')
@@ -47,26 +48,30 @@ module Circed
         return false if nickname.empty?
         return false if nickname.size > 30 # RFC limit
 
-        # First character must be letter or special char
-        first = nickname[0]
-        return false unless first.ascii_letter? || "_[]{}\\`|".includes?(first)
-
-        # Rest can be letters, digits, or special chars
-        nickname[1..].each_char do |char|
-          return false unless char.ascii_alphanumeric? || "-_[]{}\\`|".includes?(char)
+        nickname.each_char_with_index do |char, index|
+          if index == 0
+            return false unless char.ascii_letter? || "_[]{}\\`|^".includes?(char)
+          else
+            return false unless char.ascii_alphanumeric? || "-_[]{}\\`|^".includes?(char)
+          end
         end
 
         true
       end
 
-      # User mode validation
-      def self.valid_user_mode?(mode : Char) : Bool
-        "iwo".includes?(mode)
+      def self.mode_string(modes : Set(Char)) : String
+        String.build do |io|
+          io << '+'
+          modes.each do |mode|
+            io << mode
+          end
+        end
       end
 
-      # Channel mode validation
-      def self.valid_channel_mode?(mode : Char) : Bool
-        "ontpsimklv".includes?(mode)
+      def self.mode_set(modes : String) : Set(Char)
+        result = Set(Char).new
+        modes.each_char { |mode| result << mode unless mode == '+' || mode == '-' }
+        result
       end
 
       # Common error sending helpers
@@ -91,7 +96,7 @@ module Circed
       end
 
       def self.send_not_registered_error(sender : Client)
-        send_error(sender, Numerics::ERR_NOTREGISTERED, "*", ErrorMessages::NOT_REGISTERED)
+        send_error(sender, Numerics::ERR_NOTREGISTERED, ErrorMessages::NOT_REGISTERED)
       end
 
       def self.send_nickname_in_use_error(sender : Client, nickname : String)
@@ -126,7 +131,6 @@ module Circed
         send_error(sender, Numerics::ERR_BANNEDFROMCHAN, channel_name, ErrorMessages::BANNED_FROM_CHANNEL)
       end
 
-      # Format hostmask efficiently (moved from UnifiedMessaging)
       def self.format_hostmask(nickname : String, username : String, hostname : String) : String
         capacity = nickname.size + username.size + hostname.size + 2
         String.build(capacity: capacity) do |io|
@@ -134,61 +138,47 @@ module Circed
         end
       end
 
-      # Extract channel name from IRC message parameter
-      def self.extract_channel_name(param : String) : String?
-        return nil if param.empty?
-
-        # Handle comma-separated channel lists (take first one)
-        channel = param.split(',').first?.try(&.strip)
-        return nil unless channel && valid_channel_name?(channel)
-
-        channel
+      def self.split_list_param(param : String) : Array(String)
+        param.split(',', remove_empty: true)
       end
 
-      # Extract nickname from hostmask
-      def self.extract_nickname_from_hostmask(hostmask : String) : String?
-        return nil if hostmask.empty?
+      def self.split_list_param(param : String?) : Array(String)
+        return [] of String unless param
 
-        # Format: nick!user@host
-        exclamation_pos = hostmask.index('!')
-        return nil unless exclamation_pos
+        split_list_param(param)
+      end
 
-        nickname = hostmask[0...exclamation_pos]
-        valid_nickname?(nickname) ? nickname : nil
+      def self.each_list_param(param : String, & : String ->) : Nil
+        param.split(',', remove_empty: true) { |item| yield item }
+      end
+
+      def self.trailing_param(params : Array(String), start_index : Int32, default = "") : String
+        return default if start_index >= params.size
+
+        String.build do |io|
+          index = start_index
+          while index < params.size
+            io << ' ' if index > start_index
+            param = params[index]
+            if index == start_index && param.starts_with?(':')
+              io.write(param.to_slice + 1)
+            else
+              io << param
+            end
+            index += 1
+          end
+        end
       end
 
       # Check if a user has a specific mode in a channel
       def self.user_has_channel_mode?(channel : Domain::Channel, nickname : String, mode : Char) : Bool
-        user_modes = channel.members[nickname]?
+        user_modes = channel.member_modes?(nickname)
         user_modes.try(&.includes?(mode)) || false
       end
 
       # Check if user is operator in channel
       def self.user_is_operator?(channel : Domain::Channel, nickname : String) : Bool
         user_has_channel_mode?(channel, nickname, 'o')
-      end
-
-      # Check if user is voiced in channel
-      def self.user_is_voiced?(channel : Domain::Channel, nickname : String) : Bool
-        user_has_channel_mode?(channel, nickname, 'v')
-      end
-
-      # Check if user can modify channel (operator or higher)
-      def self.user_can_modify_channel?(channel : Domain::Channel, nickname : String) : Bool
-        user_is_operator?(channel, nickname)
-      end
-
-      # Common repository access helpers
-      def self.user_repository
-        Infrastructure::ServiceLocator.user_repository
-      end
-
-      def self.channel_repository
-        Infrastructure::ServiceLocator.channel_repository
-      end
-
-      def self.server_repository
-        Infrastructure::ServiceLocator.server_repository
       end
 
       # Delegate to unified messaging for error sending

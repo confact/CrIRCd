@@ -32,7 +32,7 @@ module RepositoryHelper
   end
 
   def user_in_channel?(channel_name : String, user_nickname : String) : Bool
-    if channel = channel_repository.get(channel_name)
+    if channel = channel_repository[channel_name]?
       channel.has_member?(user_nickname)
     else
       false
@@ -40,7 +40,7 @@ module RepositoryHelper
   end
 
   def channel_empty?(channel_name : String) : Bool
-    if channel = channel_repository.get(channel_name)
+    if channel = channel_repository[channel_name]?
       channel.empty?
     else
       true
@@ -48,6 +48,6 @@ module RepositoryHelper
   end
 
   def get_test_channel(channel_name : String) : Circed::Domain::Channel?
-    channel_repository.get(channel_name)
+    channel_repository[channel_name]?
   end
 end

@@ -66,4 +66,16 @@ describe Circed::Actions::Join do
     # Should still not be in channel due to password validation
     user_in_channel?(channel_name, "Alice").should be_false
   end
+
+  it "consumes an invitation after a successful join" do
+    sender = create_test_client("Alice")
+    channel = create_test_channel("#invite-only")
+    channel.modes << 'i'
+    channel.add_invite("Alice")
+
+    Circed::Actions::Join.call(sender, "#invite-only")
+
+    channel.has_member?("Alice").should be_true
+    channel.invited?("Alice").should be_false
+  end
 end
