@@ -189,6 +189,19 @@ module IntegrationHelper
       self
     end
 
+    def wait_until_online(nickname : String, timeout : Time::Span = 2.seconds)
+      deadline = Time.monotonic + timeout
+      pattern = / 303 \S+ :?.*\b#{Regex.escape(nickname)}\b/
+
+      until Time.monotonic >= deadline
+        send("ISON #{nickname}")
+        return self if wait_for_response(pattern, 0.2.seconds)
+      end
+
+      expect_response(pattern, 0.seconds)
+      self
+    end
+
     def wait_for_response(pattern : Regex, timeout : Time::Span = 5.seconds) : String?
       deadline = Time.monotonic + timeout
 
