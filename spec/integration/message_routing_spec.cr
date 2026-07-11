@@ -85,6 +85,7 @@ describe "Message Routing Integration" do
 
       alice.register
       bob.register
+      alice.wait_until_online("Bob")
 
       # Alice on server 1 messages Bob on server 2
       alice.privmsg("Bob", "Cross-server private message")
@@ -208,6 +209,7 @@ describe "Message Routing Integration" do
 
       alice.register
       bob.register
+      alice.wait_until_online("Bob")
 
       # CTCP PING request across servers
       alice.send("PRIVMSG Bob :\x01PING 1234567890\x01")
