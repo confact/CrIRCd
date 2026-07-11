@@ -1,27 +1,23 @@
 module Circed
-  class Format
-    def self.format_message(params)
-      params.join(" ")
-    end
-
-    def self.format_server_message(server : String, *params)
+  module Format
+    def self.message(prefix : String, command : String, *params) : String
       String.build do |io|
-        io << ':' << server
-        params.each do |param|
-          io << ' ' << param
-        end
-        io << "\r\n"
+        message(io, prefix, command, *params)
       end
     end
 
-    def self.format_user_message(server : String, *params)
-      String.build do |io|
-        io << server
-        params.each do |param|
-          io << ' ' << param
-        end
-        io << "\r\n"
+    def self.message(io : IO, prefix : String, command : String, *params) : Nil
+      message_params = Array(String).new(params.size)
+      params.each do |param|
+        message_params << param.to_s
       end
+
+      if (trailing = message_params.last?) && trailing.starts_with?(':')
+        message_params[-1] = trailing.lchop(':')
+      end
+
+      irc_prefix = FastIRC::Prefix.new(source: prefix.lchop(':'), user: nil, host: nil)
+      FastIRC::Message.new(command, message_params, prefix: irc_prefix).to_s(io)
     end
   end
 end

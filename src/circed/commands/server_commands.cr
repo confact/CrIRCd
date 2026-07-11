@@ -2,7 +2,7 @@ require "../performance/metrics"
 
 module Circed
   module Commands
-    # RFC 2813 server-to-server commands - performance optimized
+    # RFC 2813 server-to-server commands
     module ServerCommands
       # SQUIT - Server Quit
       # Format: SQUIT <server> :<comment>
@@ -11,24 +11,19 @@ module Circed
 
         Performance::Metrics.time_netsplit do
           server_name = params[0]
-          comment = params[1..]?.try(&.join(' ')) || "No reason"
-          comment = comment.lstrip(':')
+          comment = Utils::IrcUtils.trailing_param(params, 1, "No reason")
+          return unless Network::NetworkState.get_server(server_name)
 
           Log.info { "Received SQUIT for #{server_name}: #{comment}" }
 
           # Forward SQUIT to other servers first (before removing from state)
           forward_to_servers(link_server, "SQUIT", params)
 
-          # Remove server from network state (this handles transitive disconnections)
-          Network::NetworkState.remove_server(server_name, send_squit: false) # Don't send SQUIT again
+          Network::NetworkState.remove_server(server_name, send_squit: false)
 
-          # If it's our direct connection, close it
           if server_name == link_server.name
-            link_server.close("Received SQUIT: #{comment}")
+            link_server.close_from_peer("Received SQUIT: #{comment}")
           end
-
-          # Update metrics
-          Performance::Metrics.decrement_server_connections
         end
       end
 
@@ -38,19 +33,15 @@ module Circed
         return if params.size < 2
 
         nickname = params[0]
-        comment = params[1..]?.try(&.join(' ')) || "Killed"
-        comment = comment.lstrip(':')
+        comment = Utils::IrcUtils.trailing_param(params, 1, "Killed")
 
         Log.info { "Received KILL for #{nickname}: #{comment}" }
 
-        # Remove user from network state
         Network::NetworkState.remove_user(nickname)
 
-        # Forward KILL to other servers
         forward_to_servers(link_server, "KILL", params)
 
-        # If it's a local user, disconnect them
-        if local_client = find_local_client(nickname)
+        if local_client = Infrastructure::ServiceLocator.user_repository.get_client(nickname)
           local_client.send_error("Killed: #{comment}")
           local_client.close
         end
@@ -61,20 +52,49 @@ module Circed
       def self.wallops(link_server : LinkServer, params : Array(String)) : Nil
         return if params.empty?
 
-        message = params.join(' ').lstrip(':')
+        message = Utils::IrcUtils.trailing_param(params, 0)
         source = link_server.name.empty? ? link_server.target_host : link_server.name
         wallops_message = ":#{source} WALLOPS :#{message}"
         user_repository = Infrastructure::ServiceLocator.user_repository
 
         user_repository.each_client do |client|
           next unless nickname = client.nickname
-          next unless user = user_repository.get(nickname)
+          next unless user = user_repository[nickname]?
           next unless user.modes.includes?('w')
 
           client.send_message(wallops_message)
         end
 
         forward_to_servers(link_server, "WALLOPS", params)
+      end
+
+      # GLINE - Network-wide user@host ban extension
+      # Add format: GLINE <mask> <expires-unix|0> <set-by> :<reason>
+      # Remove format: GLINE <mask>
+      def self.gline(link_server : LinkServer, params : Array(String)) : Nil
+        return if params.empty?
+
+        if params.size == 1
+          mask = Network::LineState.normalize_mask(Domain::LineBan::GLINE, params[0])
+          return unless Network::LineState.remove(Domain::LineBan::GLINE, mask)
+
+          forward_to_servers(link_server, "#{Domain::LineBan::GLINE} #{mask}")
+          return
+        end
+
+        return if params.size < 4
+
+        mask = params[0]
+        expires_at = params[1].to_i64?
+        set_by = params[2]
+        reason = Utils::IrcUtils.trailing_param(params, 3, "No reason given")
+        return if expires_at && expires_at > 0 && expires_at <= Time.utc.to_unix
+
+        line = Network::LineState.add_until(Domain::LineBan::GLINE, mask, reason, set_by, expires_at && expires_at > 0 ? Time.unix(expires_at) : nil)
+        return unless line
+
+        Network::LineState.enforce(line)
+        forward_to_servers(link_server, line.server_message)
       end
 
       # LINKS - Server list query
@@ -150,13 +170,14 @@ module Circed
       end
 
       private def self.send_command_stats(client : Client)
-        Performance::Metrics.command_counts.to_a.sort_by(&.[0]).each do |command, count|
+        command_counts = Performance::Metrics.command_counts
+        command_counts.keys.sort!.each do |command|
           client.send_message(
             Server.clean_name,
             "212",
             client.nickname || "*",
             command,
-            count.to_s,
+            command_counts[command].to_s,
             "0",
             "0"
           )
@@ -230,135 +251,89 @@ module Circed
         route_command_or_execute(client, "ADMIN", target) do
           nick = client.nickname || "*"
 
-          # Send admin info responses
-          [
-            ["256", Server.name, ":Administrative info"],
-            ["257", ":Circed IRC Server"],
-            ["258", ":Server Location"],
-            ["259", ":admin@#{Server.config.host}"],
-          ].each do |code, *data|
-            client.send_message(Server.clean_name, code, nick, *data)
-          end
+          client.send_message(Server.clean_name, "256", nick, Server.name, ":Administrative info")
+          client.send_message(Server.clean_name, "257", nick, ":Circed IRC Server")
+          client.send_message(Server.clean_name, "258", nick, ":Server Location")
+          client.send_message(Server.clean_name, "259", nick, ":admin@#{Server.config.host}")
         end
       end
 
       # NJOIN - Efficient channel join for burst
-      # Format: NJOIN <channel> <modes> :<nicknames>
+      # Format: NJOIN <channel> <created-at> <channel-modes> <member-modes> :<nicknames>
       def self.njoin(link_server : LinkServer, params : Array(String)) : Nil
-        return if params.size < 3
+        return if params.size < 5
 
         Performance::Metrics.time_message_processing do
           channel_name = params[0]
-          modes_str = params[1]
-          nicknames_str = params[2..]?.try(&.join(' ')) || ""
-          nicknames_str = nicknames_str.lstrip(':')
+          created_at = Time.unix(params[1].to_i64? || Time.utc.to_unix)
+          channel_modes = Utils::IrcUtils.mode_set(params[2])
+          member_modes = Utils::IrcUtils.mode_set(params[3])
+          nicknames_str = Utils::IrcUtils.trailing_param(params, 4)
 
-          # Split with better performance for large user lists
-          nicknames = nicknames_str.split(limit: 100) # Reasonable limit for batch joins
-
-          # Parse user modes in channel with pre-allocated set
-          user_modes = Set(Char).new(initial_capacity: 4)
-          if modes_str.starts_with?('+')
-            modes_str.each_char_with_index do |char, index|
-              next if index == 0 # Skip the '+'
-              user_modes << char
-            end
-          end
-
-          Log.debug { "NJOIN: #{nicknames.size} users joining #{channel_name} with modes #{modes_str}" }
-
-          # Add users to channel in network state
-          Network::NetworkState.add_channel(channel_name)
+          nicknames = nicknames_str.split
+          accept_member_modes = Network::NetworkState.merge_channel(channel_name, created_at, channel_modes)
           nicknames.each do |nickname|
-            Network::NetworkState.join_user_to_channel(nickname, channel_name, user_modes.dup)
-          end
+            next unless Network::NetworkState.user_routed_through?(nickname, link_server.name)
 
-          # Forward to other servers (except sender)
+            modes = accept_member_modes ? member_modes.dup : Set(Char).new
+            Network::NetworkState.join_user_to_channel(nickname, channel_name, modes)
+          end
+          Network::NetworkState.sync_channel_repository(channel_name)
+
           forward_to_servers(link_server, "NJOIN", params)
 
-          # Notify local users in channel
-          notify_local_users_njoin(channel_name, nicknames, user_modes)
+          notify_local_users_njoin(channel_name, nicknames)
 
-          # Update metrics
           Performance::Metrics.increment_channel_operations
           Performance::Metrics.increment_messages(nicknames.size.to_u64)
         end
       end
 
-      # Helper methods
-
       private def self.forward_to_servers(sender : LinkServer, command : String, params : Array(String)) : Nil
-        message = String.build do |io|
-          io << command << ' ' << params.join(' ')
-        end
+        forward_to_servers(sender, FastIRC::Message.new(command, params).to_s)
+      end
 
+      private def self.forward_to_servers(sender : LinkServer, message : String) : Nil
         ServerHandler.servers.each do |server|
           next if server == sender
+
           server.send_message(message)
         end
       end
 
-      private def self.find_local_client(nickname : String) : Client?
-        user_repository = Infrastructure::ServiceLocator.user_repository
-        user_repository.get_client(nickname)
-      end
-
-      private def self.find_server_connection(server_name : String) : LinkServer?
-        ServerHandler.servers.find { |server| server.name == server_name }
-      end
-
-      private def self.notify_local_users_njoin(channel_name : String, nicknames : Array(String), modes : Set(Char)) : Nil
+      private def self.notify_local_users_njoin(channel_name : String, nicknames : Array(String)) : Nil
         Log.debug { "Notifying local users about NJOIN in #{channel_name}" }
 
         return unless channel = Network::NetworkState.get_channel(channel_name)
 
         user_repository = Infrastructure::ServiceLocator.user_repository
 
-        # Collect local users once
-        local_clients = channel.members.keys.compact_map do |nick|
-          user_repository.get_client(nick)
-        end
-
-        return if local_clients.empty?
-
-        # Build and send JOIN messages
         nicknames.each do |joining_nick|
           next unless user_info = Network::NetworkState.get_user(joining_nick)
 
-          join_message = format_user_join(joining_nick, user_info, channel_name)
+          join_message = ":#{joining_nick}!#{user_info.username}@#{user_info.hostname} JOIN #{channel_name}"
 
-          # Send to all local users in the channel
-          local_clients.each do |client|
-            client.send_message(join_message)
-          end
-        end
-      end
-
-      private def self.format_user_join(nickname : String, user_info : Network::NetworkState::UserInfo, channel_name : String) : String
-        # Format: ":nick!user@host JOIN #channel"
-        hostmask = "#{nickname}!#{user_info.username}@#{user_info.hostname}"
-        ":#{hostmask} JOIN #{channel_name}"
-      end
-
-      # Extract common server routing pattern
-      private def self.route_command_or_execute(client : Client, command : String, target : String?, &)
-        if target && target != Server.name
-          # Forward to target server
-          if route = Network::NetworkState.route_to_server(target)
-            if target_server = find_server_connection(route)
-              target_server.send_message("#{command} #{target}")
-              return
+          channel.members.each_key do |nick|
+            if client = user_repository.get_client(nick)
+              client.send_message(join_message)
             end
           end
-
-          # Server not found
-          send_no_such_server_error(client, target)
-        else
-          yield # Execute local command
         end
       end
 
-      private def self.send_no_such_server_error(client : Client, target : String)
+      private def self.route_command_or_execute(client : Client, command : String, target : String?, &)
+        unless target && target != Server.name
+          yield
+          return
+        end
+
+        if route = Network::NetworkState.route_to_server(target)
+          if target_server = ServerHandler.servers.find { |server| server.name == route }
+            target_server.send_message("#{command} #{target}")
+            return
+          end
+        end
+
         client.send_message(
           Server.clean_name,
           "402",

@@ -1,9 +1,9 @@
 # Dependency injection container for managing service instances
 module Circed
   module Infrastructure
-    class Container
+    module Container
       # Use a union type to store service instances
-      alias ServiceInstance = Repositories::UserRepository | Repositories::ChannelRepository | Repositories::ServerRepository | Services::AuthenticationService | Services::NotificationService | Services::IRCService | Services::DNSResolverService
+      alias ServiceInstance = Repositories::UserRepository | Repositories::ChannelRepository | Services::NotificationService | Services::IRCService | Services::DNSResolverService
 
       @@instances = Hash(String, ServiceInstance).new
 
@@ -30,10 +30,8 @@ module Circed
         # Create repositories
         user_repo = Repositories::UserRepository.new
         channel_repo = Repositories::ChannelRepository.new
-        server_repo = Repositories::ServerRepository.new
 
         # Create services
-        auth_service = Services::AuthenticationService.new(config)
         dns_resolver_service = Services::DNSResolverService.new(config.dns)
         notification_service = Services::NotificationService.new(user_repo, channel_repo)
         irc_service = Services::IRCService.new(user_repo, channel_repo, notification_service)
@@ -41,8 +39,6 @@ module Circed
         # Register in container
         register(Repositories::UserRepository, user_repo)
         register(Repositories::ChannelRepository, channel_repo)
-        register(Repositories::ServerRepository, server_repo)
-        register(Services::AuthenticationService, auth_service)
         register(Services::DNSResolverService, dns_resolver_service)
         register(Services::NotificationService, notification_service)
         register(Services::IRCService, irc_service)
@@ -59,16 +55,8 @@ module Circed
         Container.resolve(Repositories::ChannelRepository)
       end
 
-      def self.server_repository : Repositories::ServerRepository
-        Container.resolve(Repositories::ServerRepository)
-      end
-
       def self.notification_service : Services::NotificationService
         Container.resolve(Services::NotificationService)
-      end
-
-      def self.authentication_service : Services::AuthenticationService
-        Container.resolve(Services::AuthenticationService)
       end
 
       def self.irc_service : Services::IRCService

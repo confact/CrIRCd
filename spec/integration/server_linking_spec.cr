@@ -98,6 +98,37 @@ describe "Server-to-Server Linking Integration" do
 
       alice.quit
     end
+
+    it "cleans split users and restores channel state after reconnect" do
+      env.setup_linked_servers(ssl_enabled: false)
+
+      alice = env.create_client("Alice", port: 16667, ssl: false)
+      bob = env.create_client("Bob", port: 17667, ssl: false)
+      alice.register
+      bob.register
+      alice.join("#split")
+      bob.join("#split")
+      alice.should_receive(/Bob.*JOIN.*#split/)
+      alice.clear_responses
+
+      env.servers[1].stop
+
+      alice.should_receive(/Bob.*QUIT :test_server1 test_server2/)
+      alice.should_not_receive(/Bob.*QUIT/, 0.3.seconds)
+      alice.send("NAMES #split")
+      alice.should_receive(/ 353 .*#split/).should_not contain("Bob")
+
+      env.restart_linked_server(1)
+      reconnected_bob = env.create_client("Bob", port: 17667, ssl: false)
+      reconnected_bob.register
+      reconnected_bob.join("#split")
+
+      reconnected_bob.should_receive(/ 353 .*#split.*Alice/)
+      alice.should_receive(/Bob.*JOIN.*#split/)
+
+      alice.quit
+      reconnected_bob.quit
+    end
   end
 
   describe "link authentication" do

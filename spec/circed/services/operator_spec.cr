@@ -5,7 +5,7 @@ def operator_test_config : Circed::Config
     host: "localhost"
     port: 6667
     max_users: 1000
-    server_password: nil
+    server_password: null
     network: "TestNet"
     link_password: "password"
     operators:
@@ -25,33 +25,13 @@ def operator_test_config : Circed::Config
     YAML
 end
 
-class RecordingLinkServer < Circed::LinkServer
-  getter sent_messages = [] of String
-
-  def initialize(@name : String, target_host : String? = nil, @target_port : Int32 = 6667)
-    @target_host = target_host || @name
-  end
-
-  def safe_send(message : String) : Bool
-    @sent_messages << message
-    true
-  end
-
-  def close(reason : String = "Closing connection")
-    @sent_messages << "CLOSE #{reason}"
-  end
-
-  def closed? : Bool
-    false
-  end
-end
-
 describe "IRC operator support" do
   original_config = Circed::Server.config
 
   before_each do
     clear_repositories
     Circed::Network::NetworkState.clear_all_state
+    Circed::Network::LineState.clear
     Circed::ServerHandler.servers.clear
     Circed::Server.config = operator_test_config
   end
@@ -59,6 +39,7 @@ describe "IRC operator support" do
   after_each do
     clear_repositories
     Circed::Network::NetworkState.clear_all_state
+    Circed::Network::LineState.clear
     Circed::ServerHandler.servers.clear
     Circed::Server.config = original_config
   end
@@ -68,7 +49,7 @@ describe "IRC operator support" do
 
     Circed::Infrastructure::ServiceLocator.irc_service.oper(client, "global", "secret")
 
-    user = user_repository.get("Alice")
+    user = user_repository["Alice"]?
     user.should_not be_nil
     user.try(&.modes.includes?('o')).should be_true
     user.try(&.modes.includes?('O')).should be_false
@@ -83,7 +64,7 @@ describe "IRC operator support" do
 
     Circed::Infrastructure::ServiceLocator.irc_service.oper(client, "local", "local-secret")
 
-    user = user_repository.get("Alice")
+    user = user_repository["Alice"]?
     user.should_not be_nil
     user.try(&.modes.includes?('O')).should be_true
     user.try(&.modes.includes?('o')).should be_false
@@ -99,7 +80,7 @@ describe "IRC operator support" do
     service.oper(client, "global", "secret")
     service.oper(client, "local", "local-secret")
 
-    local_modes = user_repository.get("Alice").try(&.modes)
+    local_modes = user_repository["Alice"]?.try(&.modes)
     local_modes.should_not be_nil
     local_modes.try(&.includes?('O')).should be_true
     local_modes.try(&.includes?('o')).should be_false
@@ -117,7 +98,7 @@ describe "IRC operator support" do
 
     Circed::Infrastructure::ServiceLocator.irc_service.oper(client, "global", "wrong")
 
-    user_repository.get("Alice").try(&.modes.includes?('o')).should be_false
+    user_repository["Alice"]?.try(&.modes.includes?('o')).should be_false
     client.socket.as(DummySocket).sent_data.join.should contain(" 464 Alice :Password incorrect")
   end
 
@@ -126,7 +107,7 @@ describe "IRC operator support" do
 
     Circed::Infrastructure::ServiceLocator.irc_service.oper(client, "remote", "remote-secret")
 
-    user_repository.get("Alice").try(&.modes.includes?('o')).should be_false
+    user_repository["Alice"]?.try(&.modes.includes?('o')).should be_false
     client.socket.as(DummySocket).sent_data.join.should contain(" 491 Alice :No O-lines for your host")
   end
 
@@ -135,23 +116,23 @@ describe "IRC operator support" do
 
     Circed::Actions::Mode.call(client, ["Alice", "+o"])
 
-    user_repository.get("Alice").try(&.modes.includes?('o')).should be_false
+    user_repository["Alice"]?.try(&.modes.includes?('o')).should be_false
   end
 
   it "allows IRC operators to kill local users" do
     oper = create_test_client("Alice")
     victim = create_test_client("Bob")
-    user_repository.get("Alice").try { |user| user.modes << 'o' }
+    user_repository["Alice"]?.try { |user| user.modes << 'o' }
 
     Circed::Infrastructure::ServiceLocator.irc_service.kill_user(oper, "Bob", "Testing")
 
-    user_repository.get("Bob").should be_nil
+    user_repository["Bob"]?.should be_nil
     victim.socket.as(DummySocket).sent_data.join.should contain("ERROR :Killed by Alice: Testing")
   end
 
   it "rejects local operator KILL for remote users" do
     oper = create_test_client("Alice")
-    user_repository.get("Alice").try { |user| user.modes << 'O' }
+    user_repository["Alice"]?.try { |user| user.modes << 'O' }
     Circed::Network::NetworkState.add_user("RemoteBob", "bob", "remote.example", "Bob", "remote.server", 1)
 
     Circed::Infrastructure::ServiceLocator.irc_service.kill_user(oper, "RemoteBob", "Testing")
@@ -162,7 +143,7 @@ describe "IRC operator support" do
 
   it "allows global operator KILL for remote users" do
     oper = create_test_client("Alice")
-    user_repository.get("Alice").try { |user| user.modes << 'o' }
+    user_repository["Alice"]?.try { |user| user.modes << 'o' }
     Circed::Network::NetworkState.add_user("RemoteBob", "bob", "remote.example", "Bob", "remote.server", 1)
 
     Circed::Infrastructure::ServiceLocator.irc_service.kill_user(oper, "RemoteBob", "Testing")
@@ -176,17 +157,89 @@ describe "IRC operator support" do
 
     Circed::Infrastructure::ServiceLocator.irc_service.kill_user(client, "Bob", "Testing")
 
-    user_repository.get("Bob").should_not be_nil
+    user_repository["Bob"]?.should_not be_nil
     client.socket.as(DummySocket).sent_data.join.should contain(" 481 Alice :Permission Denied- You're not an IRC operator")
   end
 
   it "rejects KILL targeting servers" do
     oper = create_test_client("Alice")
-    user_repository.get("Alice").try { |user| user.modes << 'o' }
+    user_repository["Alice"]?.try { |user| user.modes << 'o' }
 
     Circed::Infrastructure::ServiceLocator.irc_service.kill_user(oper, "irc.example.com", "Testing")
 
     oper.socket.as(DummySocket).sent_data.join.should contain(" 483 Alice irc.example.com :You can't kill a server!")
+  end
+
+  it "allows local operators to add local K-lines" do
+    oper = create_test_client("Alice")
+    victim = create_test_client("Bob")
+    user_repository["Alice"]?.try { |user| user.modes << 'O' }
+    if user = user_repository["Bob"]?
+      user.hostname = "bad.example"
+    end
+
+    Circed::Infrastructure::ServiceLocator.irc_service.line_ban(oper, "KLINE", ["*@bad.example", ":Spam"])
+
+    user_repository["Bob"]?.should be_nil
+    victim.socket.as(DummySocket).sent_data.join.should contain("ERROR :KLINE: Spam")
+    oper.socket.as(DummySocket).sent_data.join.should contain("NOTICE Alice :*** KLINE added for *!*@bad.example")
+  end
+
+  it "allows local operators to add local Z-lines" do
+    oper = create_test_client("Alice")
+    user_repository["Alice"]?.try { |user| user.modes << 'O' }
+
+    Circed::Infrastructure::ServiceLocator.irc_service.line_ban(oper, "ZLINE", ["203.0.113.*", ":Open proxy"])
+
+    oper.socket.as(DummySocket).sent_data.join.should contain("NOTICE Alice :*** ZLINE added for 203.0.113.*")
+  end
+
+  it "requires global operator privileges for G-lines" do
+    oper = create_test_client("Alice")
+    user_repository["Alice"]?.try { |user| user.modes << 'O' }
+
+    Circed::Infrastructure::ServiceLocator.irc_service.line_ban(oper, "GLINE", ["*@bad.example", ":Spam"])
+
+    oper.socket.as(DummySocket).sent_data.join.should contain(" 481 Alice :Permission Denied- You're not a global IRC operator")
+  end
+
+  it "adds, enforces, and propagates G-lines" do
+    oper = create_test_client("Alice")
+    victim = create_test_client("Bob")
+    user_repository["Alice"]?.try { |user| user.modes << 'o' }
+    if user = user_repository["Bob"]?
+      user.hostname = "bad.example"
+    end
+    next_hop = RecordingLinkServer.new("hub.server")
+    Circed::ServerHandler.add_server(next_hop)
+
+    Circed::Infrastructure::ServiceLocator.irc_service.line_ban(oper, "GLINE", ["*@bad.example", "1h", ":Spam"])
+
+    user_repository["Bob"]?.should be_nil
+    victim.socket.as(DummySocket).sent_data.join.should contain("ERROR :GLINE: Spam")
+    next_hop.sent_messages.any?(&.starts_with?("GLINE *!*@bad.example ")).should be_true
+  end
+
+  it "removes G-lines with the same command and mask only" do
+    oper = create_test_client("Alice")
+    user_repository["Alice"]?.try { |user| user.modes << 'o' }
+    next_hop = RecordingLinkServer.new("hub.server")
+    Circed::ServerHandler.add_server(next_hop)
+
+    Circed::Infrastructure::ServiceLocator.irc_service.line_ban(oper, "GLINE", ["*@bad.example", ":Spam"])
+    Circed::Infrastructure::ServiceLocator.irc_service.line_ban(oper, "GLINE", ["*@bad.example"])
+
+    context = Circed::Domain::BanMatchContext.new(
+      "Bob",
+      "bob",
+      "bad.example",
+      "192.0.2.10",
+      "Bob",
+      "Bob!bob@bad.example",
+      [] of String
+    )
+    Circed::Network::LineState.matching(context).should be_nil
+    next_hop.sent_messages.should contain("GLINE *!*@bad.example")
   end
 
   it "requires operator privileges for administrative commands" do
@@ -205,7 +258,7 @@ describe "IRC operator support" do
 
   it "keeps DIE and RESTART disabled unless explicitly configured" do
     oper = create_test_client("Alice")
-    user_repository.get("Alice").try { |user| user.modes << 'o' }
+    user_repository["Alice"]?.try { |user| user.modes << 'o' }
     service = Circed::Infrastructure::ServiceLocator.irc_service
 
     service.die(oper, "Testing")
@@ -218,7 +271,7 @@ describe "IRC operator support" do
 
   it "returns server errors for CONNECT and SQUIT targets it cannot resolve" do
     oper = create_test_client("Alice")
-    user_repository.get("Alice").try { |user| user.modes << 'o' }
+    user_repository["Alice"]?.try { |user| user.modes << 'o' }
     service = Circed::Infrastructure::ServiceLocator.irc_service
 
     service.connect_server(oper, "irc.example.com")
@@ -231,7 +284,7 @@ describe "IRC operator support" do
 
   it "rejects local operator CONNECT forwarding to another server" do
     oper = create_test_client("Alice")
-    user_repository.get("Alice").try { |user| user.modes << 'O' }
+    user_repository["Alice"]?.try { |user| user.modes << 'O' }
 
     Circed::Infrastructure::ServiceLocator.irc_service.connect_server(oper, "irc.example.com", nil, "remote.server.com")
 
@@ -240,7 +293,7 @@ describe "IRC operator support" do
 
   it "routes remote CONNECT through the next network hop" do
     oper = create_test_client("Alice")
-    user_repository.get("Alice").try { |user| user.modes << 'o' }
+    user_repository["Alice"]?.try { |user| user.modes << 'o' }
     next_hop = RecordingLinkServer.new("hub.server")
     Circed::ServerHandler.add_server(next_hop)
     Circed::Network::NetworkState.add_server("hub.server", 1, "Hub server")
@@ -255,7 +308,7 @@ describe "IRC operator support" do
 
   it "routes remote SQUIT through the next network hop without closing it" do
     oper = create_test_client("Alice")
-    user_repository.get("Alice").try { |user| user.modes << 'o' }
+    user_repository["Alice"]?.try { |user| user.modes << 'o' }
     next_hop = RecordingLinkServer.new("hub.server")
     Circed::ServerHandler.add_server(next_hop)
     Circed::Network::NetworkState.add_server("hub.server", 1, "Hub server")

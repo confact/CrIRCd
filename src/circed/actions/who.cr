@@ -2,139 +2,114 @@ require "./base_action"
 
 module Circed
   class Actions::Who < Actions::BaseAction
-    protected def self.execute_action(sender : Client, target : String? = nil) : Nil
-      if target.nil? || target.empty?
-        # List all users (usually not recommended for performance)
-        # Some implementations limit this to operators only
-        send_end_of_who(sender, "*")
-        return
-      end
-
-      if target.starts_with?('#') || target.starts_with?('&')
-        # WHO for a channel
-        who_channel(sender, target)
+    protected def self.execute_action(sender : Client, target : String? = nil, operators_only : Bool = false) : Nil
+      mask = target || "0"
+      mask = "0" if mask.empty?
+      if Utils::IrcUtils.valid_channel_name?(mask)
+        who_channel(sender, mask, operators_only)
       else
-        # WHO for a user
-        who_user(sender, target)
+        who_users(sender, mask, operators_only)
       end
     end
 
-    private def self.who_channel(sender : Client, channel_name : String)
-      channel_repo = channel_repository
-      user_repo = user_repository
-
-      unless channel = channel_repo.get(channel_name)
+    private def self.who_channel(sender : Client, channel_name : String, operators_only : Bool)
+      unless channel = channel_repository[channel_name]?
         send_end_of_who(sender, channel_name)
         return
       end
 
-      # Check if user can see this channel
-      unless can_see_channel?(sender, channel)
+      unless channel.visible_to?(sender.nickname)
         send_end_of_who(sender, channel_name)
         return
       end
 
-      # Send WHO replies for each member
       channel.members.each do |nickname, modes|
-        if client = user_repo.get_client(nickname)
-          send_who_reply(sender, client, channel, modes)
-        end
+        next unless user = Network::NetworkState.get_user(nickname)
+        next if operators_only && !operator?(user)
+        next unless visible_to?(sender, user)
+
+        send_who_reply(sender, user, channel, modes)
       end
 
       send_end_of_who(sender, channel_name)
     end
 
-    private def self.who_user(sender : Client, target : String)
-      user_repo = user_repository
+    private def self.who_users(sender : Client, mask : String, operators_only : Bool)
+      Network::NetworkState.users.each_value do |user|
+        next if operators_only && !operator?(user)
+        next unless visible_to?(sender, user)
+        next unless mask == "0" || mask == "*" || matches_mask?(user, mask)
 
-      if client = user_repo.get_client(target)
-        # Find a common channel or just send basic info
-        channel = find_common_channel(sender, client)
-
-        send_who_reply(sender, client, channel)
+        channel = find_common_channel(sender.nickname, user.nickname)
+        modes = channel.try(&.member_modes?(user.nickname))
+        send_who_reply(sender, user, channel, modes)
       end
 
-      send_end_of_who(sender, target)
+      send_end_of_who(sender, mask)
     end
 
-    private def self.can_see_channel?(sender : Client, channel : Domain::Channel) : Bool
-      # User can see channel if:
-      # 1. They are in the channel
-      # 2. Channel is not secret
+    private def self.find_common_channel(sender_nickname : String?, target_nickname : String) : Domain::Channel?
+      return unless sender_nickname
 
-      if nickname = sender.nickname
-        return true if channel.has_member?(nickname)
-      end
-      return false if channel.secret?
-
-      true
-    end
-
-    private def self.find_common_channel(sender : Client, target : Client) : Domain::Channel?
-      sender_nick = sender.nickname
-      target_nick = target.nickname
-      return nil unless sender_nick && target_nick
-
-      channel_repo = channel_repository
-      sender_channels = channel_repo.find_user_channels(sender_nick)
-      target_channels = channel_repo.find_user_channels(target_nick)
-
-      # Find first common channel
-      sender_channels.each do |channel|
-        if target_channels.any? { |target_channel| target_channel.name == channel.name }
-          return channel
-        end
+      channel_repository.each_user_channel(sender_nickname) do |channel|
+        return channel if channel.has_member?(target_nickname)
       end
 
       nil
     end
 
-    private def self.send_who_reply(sender : Client, client : Client, channel : Domain::Channel? = nil, modes : Set(Char)? = nil)
-      # WHO reply format:
-      # :server 352 nick channel username host server nick flags :hopcount realname
+    private def self.matches_mask?(user : Network::NetworkState::UserInfo, mask : String) : Bool
+      Domain::Wildcard.match?(mask, user.nickname) ||
+        Domain::Wildcard.match?(mask, user.username) ||
+        Domain::Wildcard.match?(mask, user.hostname) ||
+        Domain::Wildcard.match?(mask, user.server) ||
+        Domain::Wildcard.match?(mask, user.realname)
+    end
 
-      user = client.user
-      return unless user
+    private def self.visible_to?(sender : Client, user : Network::NetworkState::UserInfo) : Bool
+      return true if sender.nickname.try { |nickname| Domain::CaseMapping.same?(nickname, user.nickname) }
+      return true unless user_modes(user).includes?('i')
 
-      # Channel name or "*" if no channel
-      channel_name = channel ? channel.name : "*"
+      !find_common_channel(sender.nickname, user.nickname).nil?
+    end
 
-      # Host information
-      hostname = client.host || "unknown"
+    private def self.user_modes(user : Network::NetworkState::UserInfo) : Set(Char)
+      user_repository[user.nickname]?.try(&.modes) || user.modes
+    end
+
+    private def self.operator?(user : Network::NetworkState::UserInfo) : Bool
+      Domain::User::OPERATOR_MODES.any? { |mode| user_modes(user).includes?(mode) }
+    end
+
+    private def self.send_who_reply(sender : Client, user : Network::NetworkState::UserInfo,
+                                    channel : Domain::Channel? = nil, modes : Set(Char)? = nil)
+      channel_name = channel.try(&.name) || "*"
 
       sender.send_message(
         Server.clean_name,
         Numerics::RPL_WHOREPLY,
         sender.nickname || "*",
         channel_name,
-        user.name,
-        hostname,
-        Server.clean_name,
-        client.nickname || "*",
-        who_flags(sender, client, channel, modes),
-        ":0 #{user.realname}"
+        user.username,
+        user.hostname,
+        user.server,
+        user.nickname,
+        who_flags(user, channel, modes),
+        ":#{user.hopcount} #{user.realname}"
       )
     end
 
-    private def self.who_flags(sender : Client, client : Client, channel : Domain::Channel?, modes : Set(Char)?) : String
-      flags = "H"
-      flags += "*" if client.nickname == sender.nickname
-      if channel && (prefix = channel_mode_prefix(modes))
-        flags += prefix.to_s
+    private def self.who_flags(user : Network::NetworkState::UserInfo, channel : Domain::Channel?, modes : Set(Char)?) : String
+      String.build(capacity: 3) do |io|
+        io << (user.away_message ? 'G' : 'H')
+        io << '*' if operator?(user)
+        if channel && modes && (prefix = Domain::Channel.member_prefix(modes))
+          io << prefix
+        end
       end
-      flags
-    end
-
-    private def self.channel_mode_prefix(modes : Set(Char)?) : Char?
-      return nil unless modes
-
-      return '@' if modes.includes?('o')
-      return '+' if modes.includes?('v')
     end
 
     private def self.send_end_of_who(sender : Client, target : String)
-      # Send RPL_ENDOFWHO
-      # Format: :server 315 nick target :End of /WHO list
       sender.send_message(
         Server.clean_name,
         Numerics::RPL_ENDOFWHO,

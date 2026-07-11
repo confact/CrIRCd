@@ -10,7 +10,15 @@ end
 
 describe Circed::Commands::ServerCommands do
   before_each do
+    clear_repositories
     Circed::Network::NetworkState.clear_all_state
+    Circed::Network::LineState.clear
+    Circed::ServerHandler.servers.clear
+  end
+
+  after_each do
+    clear_repositories
+    Circed::Network::LineState.clear
   end
 
   describe "SQUIT command" do
@@ -61,6 +69,34 @@ describe Circed::Commands::ServerCommands do
       # Network state should be unchanged
       Circed::Network::NetworkState.stats[:servers].should eq(0)
     end
+
+    it "does not forward an already processed SQUIT" do
+      source = RecordingLinkServer.new("source.irc")
+      peer = RecordingLinkServer.new("peer.irc")
+      Circed::ServerHandler.add_server(source)
+      Circed::ServerHandler.add_server(peer)
+      Circed::Network::NetworkState.add_server("target.irc", 1, "Target")
+
+      2.times do
+        Circed::Commands::ServerCommands.squit(source, ["target.irc", ":Split"])
+      end
+
+      peer.sent_messages.count(&.starts_with?("SQUIT target.irc")).should eq(1)
+    end
+
+    it "does not rebroadcast SQUIT while closing its direct link" do
+      source = RecordingLinkServer.new("source.irc")
+      peer = RecordingLinkServer.new("peer.irc")
+      Circed::ServerHandler.add_server(source)
+      Circed::ServerHandler.add_server(peer)
+      Circed::Network::NetworkState.add_server("source.irc", 1, "Source")
+
+      Circed::Commands::ServerCommands.squit(source, ["source.irc", ":Split"])
+
+      peer.sent_messages.count(&.starts_with?("SQUIT source.irc")).should eq(1)
+      source.sent_messages.should contain("CLOSE Received SQUIT: Split")
+      Circed::ServerHandler.servers.includes?(source).should be_false
+    end
   end
 
   describe "KILL command" do
@@ -92,11 +128,22 @@ describe Circed::Commands::ServerCommands do
   end
 
   describe "WALLOPS command" do
+    it "preserves a multiword trailing parameter when forwarding" do
+      source = RecordingLinkServer.new("source.irc")
+      peer = RecordingLinkServer.new("peer.irc")
+      Circed::ServerHandler.add_server(source)
+      Circed::ServerHandler.add_server(peer)
+
+      Circed::Commands::ServerCommands.wallops(source, ["Network maintenance"])
+
+      peer.sent_messages.should contain("WALLOPS :Network maintenance\r\n")
+    end
+
     it "forwards server wallops to local users with +w mode" do
       link_server = create_link_server
       wallops_user = create_test_client("Alice")
       quiet_user = create_test_client("Bob")
-      user_repository.get("Alice").try { |user| user.modes << 'w' }
+      user_repository["Alice"]?.try { |user| user.modes << 'w' }
 
       Circed::Commands::ServerCommands.wallops(link_server, [":Network maintenance"])
 
@@ -111,15 +158,60 @@ describe Circed::Commands::ServerCommands do
     end
   end
 
+  describe "GLINE command" do
+    it "stores and enforces remote G-lines" do
+      link_server = create_link_server
+      victim = create_test_client("Bob")
+      if user = user_repository["Bob"]?
+        user.hostname = "bad.example"
+      end
+
+      Circed::Commands::ServerCommands.gline(link_server, ["*@bad.example", "0", "remote.oper", ":Spam"])
+
+      user_repository["Bob"]?.should be_nil
+      victim.socket.as(DummySocket).sent_data.join.should contain("ERROR :GLINE: Spam")
+    end
+
+    it "removes remote G-lines by mask" do
+      link_server = create_link_server
+
+      Circed::Commands::ServerCommands.gline(link_server, ["*@bad.example", "0", "remote.oper", ":Spam"])
+      Circed::Commands::ServerCommands.gline(link_server, ["*@bad.example"])
+
+      context = Circed::Domain::BanMatchContext.new(
+        "Bob",
+        "bob",
+        "bad.example",
+        "192.0.2.10",
+        "Bob",
+        "Bob!bob@bad.example",
+        [] of String
+      )
+      Circed::Network::LineState.matching(context).should be_nil
+    end
+
+    it "does not forward duplicate G-lines" do
+      link_server = create_link_server
+      peer = RecordingLinkServer.new("peer.irc")
+      Circed::ServerHandler.add_server(link_server)
+      Circed::ServerHandler.add_server(peer)
+
+      Circed::Commands::ServerCommands.gline(link_server, ["*@bad.example", "0", "remote.oper", ":Spam"])
+      Circed::Commands::ServerCommands.gline(link_server, ["*@bad.example", "0", "remote.oper", ":Spam"])
+
+      peer.sent_messages.count(&.starts_with?("GLINE *!*@bad.example")).should eq(1)
+    end
+  end
+
   describe "NJOIN command" do
     it "joins multiple users to channel efficiently" do
       link_server = create_link_server
       # Set up users
-      Circed::Network::NetworkState.add_user("alice", "alice", "server.irc", "Alice", "server.irc", 1)
-      Circed::Network::NetworkState.add_user("bob", "bob", "server.irc", "Bob", "server.irc", 1)
+      Circed::Network::NetworkState.add_user("alice", "alice", "server.irc", "Alice", link_server.name, 1)
+      Circed::Network::NetworkState.add_user("bob", "bob", "server.irc", "Bob", link_server.name, 1)
 
       # Send NJOIN
-      Circed::Commands::ServerCommands.njoin(link_server, ["#test", "+o", ":alice bob"])
+      Circed::Commands::ServerCommands.njoin(link_server, ["#test", "100", "+", "+o", ":alice bob"])
 
       # Channel should exist with both users
       channel = Circed::Network::NetworkState.get_channel("#test")
@@ -139,6 +231,22 @@ describe Circed::Commands::ServerCommands do
       # Should not crash
       Circed::Commands::ServerCommands.njoin(link_server, ["#test"])
       Circed::Commands::ServerCommands.njoin(link_server, [] of String)
+    end
+
+    it "does not merge trailing nicknames in larger NJOIN messages" do
+      link_server = create_link_server
+      nicknames = (1..101).map { |index| "u#{index}" }
+
+      nicknames.each do |nickname|
+        Circed::Network::NetworkState.add_user(nickname, nickname, "host", nickname, link_server.name)
+      end
+      Circed::Commands::ServerCommands.njoin(link_server, ["#large", "100", "+", "+", ":#{nicknames.join(' ')}"])
+
+      channel = Circed::Network::NetworkState.get_channel("#large")
+      channel.should_not be_nil
+      channel.try(&.members.size).should eq(101)
+      channel.try(&.members.has_key?("u100 u101")).should be_false
+      channel.try(&.members.has_key?("u101")).should be_true
     end
   end
 

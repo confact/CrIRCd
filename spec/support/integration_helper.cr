@@ -525,6 +525,16 @@ module IntegrationHelper
       client
     end
 
+    def restart_linked_server(index : Int32, timeout : Time::Span = 5.seconds) : Nil
+      offsets = servers.map do |server|
+        File.exists?(server.log_file) ? File.size(server.log_file) : 0_i64
+      end
+
+      servers[index].start
+      wait_for_log(servers[0].log_file, /Received end of burst from test_server2/, timeout, offsets[0])
+      wait_for_log(servers[1].log_file, /Received end of burst from test_server1/, timeout, offsets[1])
+    end
+
     def teardown
       clients.each(&.close)
       servers.each(&.stop)
@@ -599,15 +609,19 @@ module IntegrationHelper
 
     private def wait_for_link_establishment(server1 : TestServer, server2 : TestServer, timeout : Time::Span = 3.seconds) : Nil
       wait_for_log(server1.log_file, /Received end of burst from test_server2/, timeout)
-      wait_for_log(server2.log_file, /Received end of burst from localhost/, timeout)
+      wait_for_log(server2.log_file, /Received end of burst from test_server1/, timeout)
     end
 
-    private def wait_for_log(log_file : String, pattern : Regex, timeout : Time::Span) : Nil
+    private def wait_for_log(log_file : String, pattern : Regex, timeout : Time::Span, offset : Int64 = 0_i64) : Nil
       deadline = Time.monotonic + timeout
 
       loop do
-        if File.exists?(log_file) && File.read(log_file).matches?(pattern)
-          return
+        if File.exists?(log_file)
+          matched = File.open(log_file) do |file|
+            file.seek(offset)
+            file.gets_to_end.matches?(pattern)
+          end
+          return if matched
         end
 
         raise "Timed out waiting for #{pattern} in #{log_file}" if Time.monotonic > deadline

@@ -21,7 +21,13 @@ end
 
 describe Circed::Network::BurstProtocol do
   before_each do
-    Circed::Network::NetworkState.clear_all_state
+    clear_repositories
+    Circed::Network::LineState.clear
+  end
+
+  after_each do
+    clear_repositories
+    Circed::Network::LineState.clear
   end
 
   describe "send_burst" do
@@ -51,6 +57,17 @@ describe Circed::Network::BurstProtocol do
 
       # Should end with EOB
       messages.last.should eq("EOB")
+    end
+
+    it "preserves display casing when bursting canonicalized names" do
+      mock_server = MockLinkServer.new("new.irc")
+      Circed::Network::NetworkState.add_user("Alice[One]", "alice", "host", "Alice", "hub.irc")
+      Circed::Network::NetworkState.join_user_to_channel("Alice[One]", "#Mixed[Case]")
+
+      Circed::Network::BurstProtocol.send_burst(mock_server)
+
+      mock_server.sent_messages.any?(&.starts_with?("NICK Alice[One] ")).should be_true
+      mock_server.sent_messages.any?(&.starts_with?("NJOIN #Mixed[Case] ")).should be_true
     end
 
     it "sends user modes correctly in burst" do
@@ -93,6 +110,15 @@ describe Circed::Network::BurstProtocol do
       away_message.try(&.includes?("Gone fishing")).should be_true
     end
 
+    it "sends G-lines in burst" do
+      mock_server = MockLinkServer.new("new.irc")
+      Circed::Network::LineState.add("GLINE", "*@bad.example", "Spam", "oper")
+
+      Circed::Network::BurstProtocol.send_burst(mock_server)
+
+      mock_server.sent_messages.any?(&.starts_with?("GLINE *!*@bad.example 0 oper :Spam")).should be_true
+    end
+
     it "sends channel topics in burst" do
       mock_server = MockLinkServer.new("new.irc")
 
@@ -102,7 +128,15 @@ describe Circed::Network::BurstProtocol do
       Circed::Network::NetworkState.join_user_to_channel("user", "#topic_chan")
 
       # Set topic using burst protocol processing
-      params = ["#topic_chan", "admin", ":Welcome to the channel!"]
+      channel_created_at = Circed::Network::NetworkState.get_channel("#topic_chan").try(&.created_at)
+      channel_created_at.should_not be_nil
+      params = [
+        "#topic_chan",
+        channel_created_at.as(Time).to_unix.to_s,
+        Time.utc.to_unix.to_s,
+        "admin",
+        ":Welcome to the channel!",
+      ]
       Circed::Network::BurstProtocol.process_burst_message("TOPIC", params, mock_server)
 
       # Clear messages from processing
@@ -216,7 +250,7 @@ describe Circed::Network::BurstProtocol do
       mock_server = MockLinkServer.new("sender.irc")
 
       # Process NICK message
-      params = ["alice", "1", "alice", "alice.host", "301", "+io", ":Alice User"]
+      params = ["alice", "1", "100", "alice", "alice.host", "sender.irc", "+io", ":Alice User"]
       Circed::Network::BurstProtocol.process_burst_message("NICK", params, mock_server)
 
       # User should be added
@@ -238,7 +272,7 @@ describe Circed::Network::BurstProtocol do
       end
 
       # Process NJOIN message
-      params = ["#test", "+ov", ":alice bob charlie"]
+      params = ["#test", "100", "+", "+ov", ":alice  bob   charlie"]
       Circed::Network::BurstProtocol.process_burst_message("NJOIN", params, mock_server)
 
       # Channel should exist with users
@@ -251,6 +285,28 @@ describe Circed::Network::BurstProtocol do
       alice_modes.should_not be_nil
       alice_modes.try(&.includes?('o')).should be_true
       alice_modes.try(&.includes?('v')).should be_true
+
+      repository_channel = channel_repository["#test"]?
+      repository_channel.try(&.members.size).should eq(3)
+      repository_channel.try(&.members["alice"].includes?('o')).should be_true
+      repository_channel.try(&.created_at).should eq(Time.unix(100))
+    end
+
+    it "processes received G-lines" do
+      mock_server = MockLinkServer.new("sender.irc")
+
+      Circed::Network::BurstProtocol.process_burst_message("GLINE", ["*@bad.example", "0", "oper", ":Spam"], mock_server)
+
+      context = Circed::Domain::BanMatchContext.new(
+        "Bob",
+        "bob",
+        "bad.example",
+        "192.0.2.10",
+        "Bob",
+        "Bob!bob@bad.example",
+        [] of String
+      )
+      Circed::Network::LineState.matching(context).try(&.type).should eq("GLINE")
     end
 
     it "processes EOB (End of Burst)" do

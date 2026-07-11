@@ -279,8 +279,8 @@ describe "IRC Protocol Integration" do
       client.register
 
       # Send malformed command
-      client.send("PRIVMSG")                                       # Missing parameters
-      client.should_receive(/461.*PRIVMSG.*Not enough parameters/) # ERR_NEEDMOREPARAMS
+      client.send("PRIVMSG")                                    # Missing parameters
+      client.should_receive(/411.*No recipient given.*PRIVMSG/) # ERR_NORECIPIENT
 
       client.quit
     end

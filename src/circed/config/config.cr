@@ -13,6 +13,7 @@ module Circed
     getter max_users : Int32
     getter link_password : String
     getter server_password : String? = nil
+    getter line_database : String = "data/lines.yml"
     getter? allow_die : Bool = false
     getter? allow_restart : Bool = false
     getter network : String

@@ -1,4 +1,3 @@
-require "tasker"
 require "../network/ssl_socket"
 require "../actions/starttls"
 
@@ -7,11 +6,13 @@ module Circed
     OUTBOUND_QUEUE_CAPACITY = 1024
     OUTBOUND_BATCH_MESSAGES =   64
     OUTBOUND_BATCH_BYTES    = 64 * 1024
+    MAX_MESSAGE_BYTES       = 512
     IRC_LINE_END            = "\r\n"
 
     property socket : Network::SSLSocket::IRCSocket? = nil
     getter host : String?
     getter hostname : String
+    getter ip_address : String
     getter nickname : String?
     getter hostmask : String?
     property last_activity : Time
@@ -21,7 +22,7 @@ module Circed
     property? registered : Bool = false
     property password : String?
 
-    @buffer : Array(String) = [] of String
+    @buffer : Array(String)?
     @shutdown : Bool = false
     @outbound_messages : ::Channel(String)
     @direct_writes : Bool
@@ -29,12 +30,15 @@ module Circed
     @last_ping : Time?
     @last_pong : Time?
     @hostname_lookup : Channel(String?)?
+    @rate_limiter : Services::RateLimiter
 
-    def initialize(@socket : Network::SSLSocket::IRCSocket?, buffer)
+    def initialize(@socket : Network::SSLSocket::IRCSocket?, buffer, ip_address : String? = nil)
       @buffer = buffer
       @outbound_messages = ::Channel(String).new(OUTBOUND_QUEUE_CAPACITY)
       @direct_writes = ENV["CIRCED_TEST"]? == "true"
       @socket_write_mutex = Mutex.new
+      @rate_limiter = Services::RateLimiter.new
+      @ip_address = ip_address || remote_ip_address(@socket)
       @host = if sock = @socket
                 case sock
                 when TCPSocket
@@ -43,11 +47,7 @@ module Circed
                   "ssl_client"
                 end
               end
-      @hostname = if sock = @socket
-                    Hostname.get_hostname(sock)
-                  else
-                    "localhost"
-                  end
+      @hostname = ip_address ? Hostname.get_hostname(ip_address) : initial_hostname(@socket)
       @hostname_lookup = start_hostname_lookup(@hostname)
       set_hostmask
       @last_activity = Time.utc
@@ -63,20 +63,15 @@ module Circed
     def message_handling
       return unless socket
 
-      # go through buffer first
-      @buffer.each do |buff|
-        begin
-          payload = FastIRC.parse_line(buff)
-          run_commands(payload)
-        rescue ex
-          Log.warn { "Failed to parse IRC line: #{buff} - #{ex.message}" }
+      if buffer = @buffer
+        @buffer = nil
+        buffer.each do |buff|
+          parse_message(buff)
         end
       end
 
       if current_socket = socket
-        FastIRC.parse(current_socket) do |payload|
-          run_commands(payload)
-        end
+        read_messages(current_socket)
 
         cleanup_after_disconnect
       end
@@ -93,8 +88,8 @@ module Circed
     def user=(users_messages : Array(String))
       mode = users_messages[1]
       username = users_messages.first
-      realname = users_messages[3].sub(":", "")
-      @user = User.new(self, mode, username, realname)
+      realname = users_messages[3].lchop(':')
+      @user = User.new(mode, username, realname)
       set_hostmask
       Log.debug { "Set user to: #{user}" }
 
@@ -121,17 +116,20 @@ module Circed
       Log.info { message }
       return log_closed_socket_and_exit if closed?
 
-      enqueue_outbound(terminate_message(message))
+      enqueue_outbound(message.ends_with?(IRC_LINE_END) ? message : terminate_message(message))
+    end
+
+    def send_message(message : FastIRC::Message)
+      line = String.build { |io| message.to_s(io) }
+      Log.info { line }
+      return log_closed_socket_and_exit if closed?
+
+      enqueue_outbound(line)
     end
 
     def send_error(message)
       Log.info { "Sending ERROR to #{@nickname}: #{message}" }
-      return if closed?
-      enqueue_outbound(terminate_message("ERROR :#{message}"))
-    end
-
-    def notice(message)
-      send_message(":#{message}")
+      send_message(FastIRC::Message.new("ERROR", [message]))
     end
 
     def nickname=(new_nickname)
@@ -139,16 +137,16 @@ module Circed
       set_hostmask
     end
 
-    def send_message(prefix, command, *params)
+    def send_message(prefix : String, command : String, *params)
       return log_closed_socket_and_exit if closed?
-      message = build_message_line(prefix, command, params)
+      message = Format.message(prefix, command, *params)
       Log.info { message }
       enqueue_outbound(message)
     end
 
-    def send_message_now(prefix, command, *params)
+    def send_message_now(prefix : String, command : String, *params)
       return log_closed_socket_and_exit if closed?
-      message = build_message_line(prefix, command, params)
+      message = Format.message(prefix, command, *params)
       Log.info { message }
       write_to_socket(message)
     end
@@ -156,13 +154,24 @@ module Circed
     def complete_registration
       return if registered?
       return unless nickname && user
+      if (server_password = Server.config.server_password) && password != server_password
+        send_message(Server.clean_name, Numerics::ERR_PASSWDMISMATCH, nickname || "*", ":Password incorrect")
+        return
+      end
 
       apply_resolved_hostname
+      if line = matching_line_ban
+        reject_line_registration(line)
+        return
+      end
+
       self.registered = true
       Infrastructure::ServiceLocator.irc_service.sync_new_user(self)
 
       # Send welcome messages
       Server.welcome_message(self)
+      send_message(Server.lusers(self))
+      send_message(Server.motd(self))
 
       Log.info { "User #{nickname}!#{user} registered from #{host}" }
     end
@@ -204,25 +213,20 @@ module Circed
       now - last_ping > 1.minute
     end
 
-    def channels
-      return [] of Domain::Channel unless nickname = self.nickname
-      channel_repository = Infrastructure::ServiceLocator.channel_repository
-      channel_repository.find_user_channels(nickname)
+    def each_channel(& : Domain::Channel ->) : Nil
+      return unless nickname = self.nickname
+
+      Infrastructure::ServiceLocator.channel_repository.each_user_channel(nickname) do |channel|
+        yield channel
+      end
     end
 
     def ban_match_context : Domain::BanMatchContext?
       return unless nick = nickname
       channel_repository = Infrastructure::ServiceLocator.channel_repository
 
-      if domain_user = Infrastructure::ServiceLocator.user_repository.get(nick)
-        return Domain::BanMatchContext.new(
-          domain_user.nickname,
-          domain_user.username,
-          domain_user.hostname,
-          domain_user.realname,
-          domain_user.hostmask,
-          channel_repository.find_user_channel_names(nick)
-        )
+      if domain_user = Infrastructure::ServiceLocator.user_repository[nick]?
+        return domain_user.ban_match_context(@ip_address, channel_repository.find_user_channel_names(nick))
       end
 
       return unless current_user = user
@@ -231,7 +235,8 @@ module Circed
       Domain::BanMatchContext.new(
         nick,
         current_user.name,
-        get_hostname || @host || "localhost",
+        @hostname,
+        @ip_address,
         current_user.realname,
         current_hostmask,
         channel_repository.find_user_channel_names(nick)
@@ -246,10 +251,11 @@ module Circed
         channel_repository = Infrastructure::ServiceLocator.channel_repository
         affected_channels = channel_repository.remove_user_from_all_channels(nickname)
         notification_service = Infrastructure::ServiceLocator.notification_service
+        hostmask = self.hostmask || nickname
         affected_channels.each do |channel_name|
-          notification_service.notify_user_parted(nickname, channel_name)
+          notification_service.notify_channel(channel_name, ":#{hostmask} PART #{channel_name}")
         end
-        Infrastructure::ServiceLocator.user_repository.remove(nickname)
+        Infrastructure::ServiceLocator.user_repository.delete(nickname)
       end
       close_outbound_queue
       socket.try(&.close)
@@ -261,11 +267,18 @@ module Circed
     end
 
     private def run_commands(payload : FastIRC::Message)
+      unless @rate_limiter.allow?(payload.command)
+        send_message(Server.clean_name, Numerics::RPL_TRYAGAIN, nickname || "*", payload.command, ":Please wait a while and try again.")
+        return
+      end
+
       Performance::Metrics.increment_command(payload.command)
 
       case payload.command
       when "LIST", "WHOIS", "WHO", "NAMES", "LINKS", "STATS", "TIME", "VERSION", "ADMIN"
         handle_query_commands(payload)
+      when "ISON", "USERHOST", "LUSERS", "MOTD"
+        handle_simple_query(payload)
       when "NICK", "USER", "AWAY", "CAP", "PASS", "OPER"
         handle_user_commands(payload)
       when "PONG", "PING", "STARTTLS"
@@ -274,7 +287,8 @@ module Circed
         handle_channel_commands(payload)
       when "QUIT", "NOTICE", "PRIVMSG"
         handle_message_commands(payload)
-      when "KILL", "REHASH", "RESTART", "DIE", "CONNECT", "SQUIT"
+      when "KILL", "REHASH", "RESTART", "DIE", "CONNECT", "SQUIT",
+           Domain::LineBan::KLINE, Domain::LineBan::GLINE, Domain::LineBan::ZLINE
         handle_operator_commands(payload)
       else
         # Unknown command
@@ -282,14 +296,45 @@ module Circed
       end
     end
 
+    private def parse_message(line : String) : Nil
+      run_commands(FastIRC.parse_line(line, strict: true))
+    rescue ex : FastIRC::ParseException
+      handle_parse_error(ex)
+    end
+
+    private def read_messages(io : IO) : Nil
+      reader = FastIRC::Reader.new(io, strict: true)
+
+      loop do
+        begin
+          break unless payload = reader.next
+          run_commands(payload)
+        rescue ex : FastIRC::ParseException
+          handle_parse_error(ex)
+          break if ex.message == "Line length longer than 8192 chars"
+        end
+      end
+    end
+
+    private def handle_parse_error(exception : FastIRC::ParseException) : Nil
+      message = exception.message || "invalid IRC message"
+      if message.includes?("maximum allowed size") || message.starts_with?("Line length longer")
+        send_message(Server.clean_name, Numerics::ERR_INPUTTOOLONG, nickname || "*", ":Input line was too long")
+      else
+        Log.warn(exception: exception) { "Failed to parse IRC message" }
+      end
+    end
+
     private def handle_query_commands(payload : FastIRC::Message)
+      return unless require_registered
+
       case payload.command
       when "LIST"
-        Actions::List.call(self)
+        Actions::List.call(self, payload.params.first?)
       when "WHOIS"
-        Actions::Whois.call(self, payload.params.first) unless payload.params.empty?
+        handle_whois_command(payload)
       when "WHO"
-        Actions::Who.call(self, payload.params.first) unless payload.params.empty?
+        Actions::Who.call(self, payload.params.first?, payload.params[1]? == "o")
       when "NAMES"
         Actions::Names.call(self, payload.params.first?)
       when "LINKS"
@@ -305,6 +350,61 @@ module Circed
       end
     end
 
+    private def handle_simple_query(payload : FastIRC::Message) : Nil
+      return unless require_registered
+
+      case payload.command
+      when "ISON"     then handle_ison_command(payload)
+      when "USERHOST" then handle_userhost_command(payload)
+      when "LUSERS"   then send_message(Server.lusers(self))
+      when "MOTD"     then send_message(Server.motd(self))
+      end
+    end
+
+    private def handle_ison_command(payload : FastIRC::Message) : Nil
+      return unless require_param_count(payload, 1, "ISON")
+
+      online = String.build do |io|
+        first = true
+        payload.params.each do |requested_nickname|
+          next unless user = Network::NetworkState.get_user(requested_nickname)
+
+          io << ' ' unless first
+          io << user.nickname
+          first = false
+        end
+      end
+      send_message(Server.clean_name, Numerics::RPL_ISON, nickname || "*", ":#{online}")
+    end
+
+    private def handle_userhost_command(payload : FastIRC::Message) : Nil
+      return unless require_param_count(payload, 1, "USERHOST")
+
+      reply = String.build do |io|
+        first = true
+        payload.params.each_with_index do |requested_nickname, index|
+          break if index == 5
+          next unless user = Network::NetworkState.get_user(requested_nickname)
+
+          io << ' ' unless first
+          io << user.nickname
+          io << '*' if Domain::User::OPERATOR_MODES.any? { |mode| user.modes.includes?(mode) }
+          io << '=' << (user.away_message ? '-' : '+') << user.username << '@' << user.hostname
+          first = false
+        end
+      end
+      send_message(Server.clean_name, Numerics::RPL_USERHOST, nickname || "*", ":#{reply}")
+    end
+
+    private def handle_whois_command(payload : FastIRC::Message) : Nil
+      if payload.params.empty?
+        send_message(Server.clean_name, Numerics::ERR_NONICKNAMEGIVEN, nickname || "*", ":No nickname given")
+        return
+      end
+
+      Actions::Whois.call(self, payload.params.size > 1 ? payload.params[1] : payload.params.first)
+    end
+
     private def handle_user_commands(payload : FastIRC::Message)
       case payload.command
       when "PASS"
@@ -314,30 +414,44 @@ module Circed
       when "USER"
         handle_user_command(payload)
       when "AWAY"
-        away_message = payload.params.empty? ? nil : joined_params(payload.params)
+        return unless require_registered
+        away_message = payload.params.empty? ? nil : Utils::IrcUtils.trailing_param(payload.params, 0)
         Actions::Away.call(self, away_message)
       when "CAP"
         return if payload.params.empty?
         Actions::Cap.call(self, payload.params.first, payload.params[1]?)
       when "OPER"
+        return unless require_registered
         handle_oper_command(payload)
       end
     end
 
     private def handle_pass_command(payload : FastIRC::Message) : Nil
+      if registered?
+        send_message(Server.clean_name, Numerics::ERR_ALREADYREGISTRED, nickname || "*", ":You may not reregister")
+        return
+      end
       unless require_param_count(payload, 1, "PASS", "*")
         return
       end
 
       self.password = payload.params.first
       return unless server_password = Server.config.server_password
-      return if password == server_password
+      if password == server_password
+        complete_registration
+        return
+      end
 
       send_message(Server.clean_name, Numerics::ERR_PASSWDMISMATCH, "*", ":Password incorrect")
       close
     end
 
     private def handle_nick_command(payload : FastIRC::Message) : Nil
+      if payload.params.empty?
+        send_message(Server.clean_name, Numerics::ERR_NONICKNAMEGIVEN, nickname || "*", ":No nickname given")
+        return
+      end
+
       if payload.params.size != 1
         send_message(Server.clean_name, Numerics::ERR_ERRONEUSNICKNAME, payload.params.first? || "*", ":Erroneous nickname")
         return
@@ -353,6 +467,11 @@ module Circed
     end
 
     private def handle_user_command(payload : FastIRC::Message) : Nil
+      if registered?
+        send_message(Server.clean_name, Numerics::ERR_ALREADYREGISTRED, nickname || "*", ":You may not reregister")
+        return
+      end
+
       return unless require_param_count(payload, 4, "USER", "*")
 
       self.user = payload.params
@@ -361,8 +480,10 @@ module Circed
     private def handle_connection_commands(payload : FastIRC::Message)
       case payload.command
       when "PONG"
+        return send_no_origin if payload.params.empty?
         pong(payload.params)
       when "PING"
+        return send_no_origin if payload.params.empty?
         ping(payload.params)
       when "STARTTLS"
         Actions::Starttls.call(self)
@@ -370,17 +491,15 @@ module Circed
     end
 
     private def handle_channel_commands(payload : FastIRC::Message)
-      # Require registration before channel commands
-      unless nickname && user
-        send_message(Server.clean_name, Numerics::ERR_NOTREGISTERED, nickname || "*", ":You have not registered")
-        return
-      end
+      return unless require_registered
+
       case payload.command
       when "JOIN"
         handle_join_command(payload)
       when "PART"
         handle_part_command(payload)
       when "MODE"
+        return unless require_param_count(payload, 1, "MODE")
         Actions::Mode.call(self, payload.params)
       when "KICK"
         handle_kick_command(payload)
@@ -396,13 +515,20 @@ module Circed
 
       channel_param = payload.params.first
       if channel_param == "0"
-        channels.each { |channel| Actions::Part.call(self, channel.name) }
+        if nickname = self.nickname
+          channel_repository = Infrastructure::ServiceLocator.channel_repository
+          channel_repository.find_user_channels(nickname).each do |channel|
+            Actions::Part.call(self, channel.name)
+          end
+        end
         return
       end
 
-      keys = split_list_param(payload.params[1]?)
-      split_list_param(channel_param).each_with_index do |channel_name, index|
+      keys = Utils::IrcUtils.split_list_param(payload.params[1]?)
+      index = 0
+      Utils::IrcUtils.each_list_param(channel_param) do |channel_name|
         Actions::Join.call(self, channel_name, keys[index]?)
+        index += 1
       end
     end
 
@@ -410,7 +536,7 @@ module Circed
       return unless require_param_count(payload, 1, "PART")
 
       reason = payload.params.size > 1 ? payload.params[1].lchop(':') : nil
-      split_list_param(payload.params.first).each do |channel_name|
+      Utils::IrcUtils.each_list_param(payload.params.first) do |channel_name|
         Actions::Part.call(self, channel_name, reason)
       end
     end
@@ -445,39 +571,51 @@ module Circed
     private def handle_message_commands(payload : FastIRC::Message)
       case payload.command
       when "QUIT"
-        Actions::Quit.call(self, joined_params(payload.params)) unless payload.params.empty?
-        quit(payload.params)
+        reason = payload.params.empty? ? nickname : Utils::IrcUtils.trailing_param(payload.params, 0)
+        Actions::Quit.call(self, reason)
+        quit(reason)
       when "NOTICE"
+        return unless require_registered
         return if payload.params.size < 2
         target = payload.params.first
-        message = joined_params(payload.params, 1)
+        message = Utils::IrcUtils.trailing_param(payload.params, 1)
         Actions::Notice.call(self, target, message)
       when "PRIVMSG"
-        if payload.params.size < 2
-          send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, nickname || "*", "PRIVMSG", ":Not enough parameters")
-          return
-        end
-        target = payload.params.first
-        message = joined_params(payload.params, 1)
-        Actions::Privmsg.call(self, target, message)
+        handle_privmsg_command(payload)
       end
     end
 
+    private def handle_privmsg_command(payload : FastIRC::Message) : Nil
+      return unless require_registered
+      if payload.params.empty?
+        send_message(Server.clean_name, Numerics::ERR_NORECIPIENT, nickname || "*", ":No recipient given (PRIVMSG)")
+        return
+      end
+      if payload.params.size < 2 || payload.params[1].empty?
+        send_message(Server.clean_name, Numerics::ERR_NOTEXTTOSEND, nickname || "*", ":No text to send")
+        return
+      end
+
+      Actions::Privmsg.call(self, payload.params.first, Utils::IrcUtils.trailing_param(payload.params, 1))
+    end
+
     private def handle_operator_commands(payload : FastIRC::Message)
+      return unless require_registered
+
       irc_service = Infrastructure::ServiceLocator.irc_service
 
       case payload.command
       when "KILL"
         return unless require_param_count(payload, 2, "KILL")
 
-        irc_service.kill_user(self, payload.params.first, joined_params(payload.params, 1).lchop(':'))
+        irc_service.kill_user(self, payload.params.first, Utils::IrcUtils.trailing_param(payload.params, 1))
       when "REHASH"
         irc_service.rehash(self)
       when "RESTART"
-        reason = payload.params.empty? ? "Restart requested" : joined_params(payload.params).lchop(':')
+        reason = payload.params.empty? ? "Restart requested" : Utils::IrcUtils.trailing_param(payload.params, 0)
         irc_service.restart(self, reason)
       when "DIE"
-        reason = payload.params.empty? ? "Shutdown requested" : joined_params(payload.params).lchop(':')
+        reason = payload.params.empty? ? "Shutdown requested" : Utils::IrcUtils.trailing_param(payload.params, 0)
         irc_service.die(self, reason)
       when "CONNECT"
         return unless require_param_count(payload, 1, "CONNECT")
@@ -486,37 +624,40 @@ module Circed
       when "SQUIT"
         return unless require_param_count(payload, 2, "SQUIT")
 
-        irc_service.squit_server(self, payload.params.first, joined_params(payload.params, 1).lchop(':'))
+        irc_service.squit_server(self, payload.params.first, Utils::IrcUtils.trailing_param(payload.params, 1))
+      when Domain::LineBan::KLINE, Domain::LineBan::GLINE, Domain::LineBan::ZLINE
+        return unless require_param_count(payload, 1, payload.command)
+
+        irc_service.line_ban(self, payload.command, payload.params)
       end
     end
 
-    private def joined_params(params : Array(String), start_index : Int32 = 0) : String
-      return "" if start_index >= params.size
-      return params[start_index] if start_index == params.size - 1
+    private def require_registered : Bool
+      return true if registered?
 
-      String.build do |io|
-        first = true
-        index = start_index
-        while index < params.size
-          if first
-            first = false
-          else
-            io << ' '
-          end
-          io << params[index]
-          index += 1
-        end
+      Utils::IrcUtils.send_not_registered_error(self)
+      false
+    end
+
+    private def send_no_origin : Nil
+      send_message(Server.clean_name, Numerics::ERR_NOORIGIN, nickname || "*", ":No origin specified")
+    end
+
+    private def remote_ip_address(socket : Network::SSLSocket::IRCSocket?) : String
+      case socket
+      when TCPSocket
+        socket.remote_address.address
+      else
+        "127.0.0.1"
       end
     end
 
-    private def split_list_param(param : String?) : Array(String)
-      return [] of String unless param
-
-      param.split(',', remove_empty: true)
-    end
-
-    private def get_hostname : String?
-      @hostname
+    private def initial_hostname(socket : Network::SSLSocket::IRCSocket?) : String
+      if sock = socket
+        Hostname.get_hostname(sock)
+      else
+        "localhost"
+      end
     end
 
     private def start_hostname_lookup(ip_address : String) : Channel(String?)?
@@ -529,7 +670,7 @@ module Circed
       return unless nick = nickname
       return if nick.empty?
 
-      Infrastructure::ServiceLocator.user_repository.remove(nick)
+      Infrastructure::ServiceLocator.user_repository.delete(nick)
     end
 
     private def cleanup_after_disconnect : Nil
@@ -543,9 +684,9 @@ module Circed
           io << ':' << (hostmask || nick) << " QUIT :Client disconnected"
         end
 
-        Infrastructure::ServiceLocator.user_repository.remove(nick)
+        Infrastructure::ServiceLocator.user_repository.delete(nick)
         channel_repository.remove_user_from_all_channels(nick)
-        Infrastructure::ServiceLocator.notification_service.notify_quit_in_channels(nick, user_channels, quit_message)
+        Infrastructure::ServiceLocator.notification_service.notify_channels(nick, user_channels, quit_message)
       end
 
       close_outbound_queue
@@ -569,10 +710,23 @@ module Circed
 
     private def update_domain_user_hostname(hostname : String) : Nil
       return unless nick = nickname
-      return unless domain_user = Infrastructure::ServiceLocator.user_repository.get(nick)
+      return unless domain_user = Infrastructure::ServiceLocator.user_repository[nick]?
 
       domain_user.hostname = hostname
-      Infrastructure::ServiceLocator.user_repository.add(nick, domain_user)
+      Infrastructure::ServiceLocator.user_repository[nick] = domain_user
+    end
+
+    private def matching_line_ban : Domain::LineBan?
+      return unless context = ban_match_context
+
+      Network::LineState.matching(context)
+    end
+
+    private def reject_line_registration(line : Domain::LineBan) : Nil
+      target = nickname || "*"
+      send_message(Server.clean_name, Numerics::ERR_YOUREBANNEDCREEP, target, ":You are banned from this server (#{line.reason})")
+      send_error("Banned: #{line.reason}")
+      shutdown
     end
 
     private def start_outbound_writer : Nil
@@ -583,34 +737,11 @@ module Circed
 
     private def outbound_writer_loop : Nil
       while first_message = @outbound_messages.receive?
-        batch = build_outbound_batch(first_message)
+        batch = OutboundBatch.build(@outbound_messages, first_message, OUTBOUND_BATCH_MESSAGES, OUTBOUND_BATCH_BYTES)
         break unless write_to_socket(batch)
       end
     ensure
       close_outbound_queue
-    end
-
-    private def build_outbound_batch(first_message : String) : String
-      message_count = 1
-      byte_count = first_message.bytesize
-
-      String.build(capacity: first_message.bytesize) do |io|
-        io << first_message
-
-        loop do
-          break if message_count >= OUTBOUND_BATCH_MESSAGES || byte_count >= OUTBOUND_BATCH_BYTES
-
-          select
-          when next_message = @outbound_messages.receive?
-            break unless next_message
-            io << next_message
-            message_count += 1
-            byte_count += next_message.bytesize
-          else
-            break
-          end
-        end
-      end
     end
 
     private def enqueue_outbound(message : String) : Bool
@@ -629,32 +760,16 @@ module Circed
     end
 
     private def close_outbound_queue : Nil
-      @outbound_messages.close unless @outbound_messages.closed?
+      @outbound_messages.close
     end
 
-    private def build_message_line(prefix, command, params) : String
-      String.build do |io|
-        io << prefix << ' ' << command
-        params.each do |param|
-          io << ' ' << param
-        end
-        io << IRC_LINE_END
-      end
+    private def create_ping_message : FastIRC::Message
+      FastIRC::Message.new("PING", ["#{nickname || Server.name} #{Server.clean_name}"])
     end
 
-    private def create_ping_message : String
-      String.build do |io|
-        io << "PING :" << (nickname || Server.name) << ' ' << Server.clean_name
-      end
-    end
-
-    private def create_pong_message(params : Array(String)) : String
-      String.build do |io|
-        io << ':' << Server.name << " PONG"
-        params.each do |param|
-          io << ' ' << param
-        end
-      end
+    private def create_pong_message(params : Array(String)) : FastIRC::Message
+      prefix = FastIRC::Prefix.new(source: Server.name, user: nil, host: nil)
+      FastIRC::Message.new("PONG", params, prefix: prefix)
     end
 
     private def terminate_message(message : String) : String
@@ -693,14 +808,13 @@ module Circed
     end
 
     private def get_hostmask : String?
-      if (nick = nickname) && (domain_user = Infrastructure::ServiceLocator.user_repository.get(nick))
+      if (nick = nickname) && (domain_user = Infrastructure::ServiceLocator.user_repository[nick]?)
         return domain_user.hostmask
       end
 
       nick = nickname || ""
       username = user.try(&.name) || ""
-      hostname = get_hostname || "localhost"
-      Utils::IrcUtils.format_hostmask(nick, username, hostname)
+      Utils::IrcUtils.format_hostmask(nick, username, @hostname)
     end
 
     private def log_closed_socket_and_exit
@@ -708,16 +822,15 @@ module Circed
     end
 
     private def register_domain_user(nickname : String, username : String, realname : String, user_mode : String)
-      hostname = get_hostname || @host || "localhost"
       domain_user = Domain::User.new(
         nickname,
         username,
-        hostname,
+        @hostname,
         realname,
         Server.name
       )
       apply_registration_user_modes(domain_user, user_mode)
-      Infrastructure::ServiceLocator.user_repository.add(nickname, domain_user)
+      Infrastructure::ServiceLocator.user_repository[nickname] = domain_user
       set_hostmask
     end
 

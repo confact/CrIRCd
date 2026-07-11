@@ -15,12 +15,12 @@ class DummySocket < IPSocket
     @receive_data << data
   end
 
-  def gets(delimiter = '\n', limit : Int32 = 0) : String?
+  def gets(delimiter = '\n', limit : Int32 = 0, chomp : Bool = true) : String?
     return nil if @closed || @current_index >= @receive_data.size
 
     line = @receive_data[@current_index]
     @current_index += 1
-    line.chomp
+    chomp ? line.chomp : line
   end
 
   def read(slice : Bytes)

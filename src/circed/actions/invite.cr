@@ -7,7 +7,7 @@ module Circed
 
       channel_repo = channel_repository
 
-      if channel = channel_repo.get(channel_name)
+      if channel = channel_repo[channel_name]?
         # Check if sender is in the channel
         unless channel.has_member?(sender_nick)
           Utils::IrcUtils.send_not_on_channel_error(sender, channel_name)
@@ -41,10 +41,11 @@ module Circed
 
       # Send confirmation to sender (RPL_INVITING - 341)
       sender.send_message(Server.clean_name, "341", sender_nick, invited_user, channel_name)
+      if away_message = user_repo[invited_user]?.try(&.away_message)
+        sender.send_message(Server.clean_name, Numerics::RPL_AWAY, sender_nick, invited_user, ":#{away_message}")
+      end
 
-      # Add user to channel's invite list (for +i mode)
-      irc_service = Infrastructure::ServiceLocator.irc_service
-      irc_service.add_channel_invite(channel_name, invited_user)
+      channel_repo[channel_name]?.try(&.add_invite(invited_user))
     end
   end
 end

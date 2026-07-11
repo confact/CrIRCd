@@ -102,44 +102,41 @@ module Circed
       end
 
       private def hostname_resolves_to_ip?(resolver : Durian::Resolver, hostname : String, ip_address : String) : Bool
-        lookup_addresses(resolver, hostname).any? { |address| address == ip_address }
+        a_record_matches?(resolver, hostname, ip_address) || aaaa_record_matches?(resolver, hostname, ip_address)
       end
 
-      private def lookup_addresses(resolver : Durian::Resolver, hostname : String) : Array(String)
-        addresses = [] of String
-        lookup_a_records(resolver, hostname, addresses)
-        lookup_aaaa_records(resolver, hostname, addresses)
-        addresses
-      end
-
-      private def lookup_a_records(resolver : Durian::Resolver, hostname : String, addresses : Array(String)) : Nil
+      private def a_record_matches?(resolver : Durian::Resolver, hostname : String, ip_address : String) : Bool
         packets = resolver.query_record!(nil, hostname, Durian::RecordFlag::A, true)
         packets.try &.each do |packet|
           packet.answers.each do |answer|
             if record = answer.resourceRecord.as?(Durian::Record::A)
               if address = record.ipv4Address
-                addresses << address.address
+                return true if address.address == ip_address
               end
             end
           end
         end
+        false
       rescue ex
         Log.debug(exception: ex) { "A lookup failed for #{hostname}" }
+        false
       end
 
-      private def lookup_aaaa_records(resolver : Durian::Resolver, hostname : String, addresses : Array(String)) : Nil
+      private def aaaa_record_matches?(resolver : Durian::Resolver, hostname : String, ip_address : String) : Bool
         packets = resolver.query_record!(nil, hostname, Durian::RecordFlag::AAAA, true)
         packets.try &.each do |packet|
           packet.answers.each do |answer|
             if record = answer.resourceRecord.as?(Durian::Record::AAAA)
               if address = record.ipv6Address
-                addresses << address.address
+                return true if address.address == ip_address
               end
             end
           end
         end
+        false
       rescue ex
         Log.debug(exception: ex) { "AAAA lookup failed for #{hostname}" }
+        false
       end
 
       private def cached_entry?(ip_address : String) : CacheEntry?

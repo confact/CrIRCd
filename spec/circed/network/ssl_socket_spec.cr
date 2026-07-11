@@ -56,6 +56,11 @@ describe Circed::Network::SSLSocket do
       context = Circed::Network::SSLSocket.create_client_context(ssl_config)
       context.should be_a(OpenSSL::SSL::Context::Client)
     end
+
+    it "creates client context directly from verification settings" do
+      context = Circed::Network::SSLSocket.create_client_context(verify_mode: false)
+      context.should be_a(OpenSSL::SSL::Context::Client)
+    end
   end
 
   describe "IRCSocket type alias" do

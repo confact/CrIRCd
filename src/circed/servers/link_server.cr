@@ -1,10 +1,7 @@
-require "../mixins/unified_messaging"
 require "../network/ssl_socket"
 
 module Circed
   class LinkServer
-    include UnifiedMessaging
-
     OUTBOUND_QUEUE_CAPACITY = 4096
     OUTBOUND_BATCH_MESSAGES =  128
     OUTBOUND_BATCH_BYTES    = 256 * 1024
@@ -17,8 +14,8 @@ module Circed
 
     @pingpong : Pingpong?
 
-    @buffer = [] of String
     @disconnected : Bool = false
+    @registered : Bool = false
     @outbound_messages : ::Channel(String) = ::Channel(String).new(OUTBOUND_QUEUE_CAPACITY)
     @direct_writes : Bool = ENV["CIRCED_TEST"]? == "true"
     @socket_write_mutex : Mutex = Mutex.new
@@ -30,18 +27,11 @@ module Circed
       # Wrap with SSL if needed
       @socket = if use_ssl
                   begin
-                    # Create a minimal SSL config for client connections
-                    ssl_yaml = <<-YAML
-        enabled: true
-        verify_mode: #{verify_ssl}
-        YAML
-                    ssl_config = Config::SSLConfig.from_yaml(ssl_yaml)
-
                     # Set connection timeout
                     tcp_socket.read_timeout = 15.seconds
                     tcp_socket.write_timeout = 15.seconds
 
-                    context = Network::SSLSocket.create_client_context(ssl_config)
+                    context = Network::SSLSocket.create_client_context(verify_mode: verify_ssl)
                     ssl_socket = Network::SSLSocket.wrap_client_socket(tcp_socket, context, @target_host)
 
                     if peer_info = Network::SSLSocket.get_peer_info(ssl_socket)
@@ -70,19 +60,17 @@ module Circed
 
       start_outbound_writer unless @direct_writes
       handshake(password)
-      setup([@name])
       listen
     end
 
-    def initialize(socket : Network::SSLSocket::IRCSocket, buffer, remote_addr : Socket::IPAddress)
+    def initialize(socket : Network::SSLSocket::IRCSocket, buffer : Array(String), remote_addr : Socket::IPAddress)
       @socket = socket
-      @buffer = buffer
       @target_host = remote_addr.address
       @target_port = remote_addr.port
       @name = "" # Will be set during authentication
 
       start_outbound_writer unless @direct_writes
-      authenticate_incoming_server
+      authenticate_incoming_server(buffer)
       listen
     end
 
@@ -98,19 +86,20 @@ module Circed
       Log.info { "Sent handshake to #{@target_host}:#{@target_port}" }
     end
 
-    def authenticate_incoming_server
+    def authenticate_incoming_server(buffer : Array(String))
       auth_state = AuthenticationState.new
 
-      @buffer.each do |line|
+      buffer.each do |line|
         process_authentication_line(line, auth_state)
-        return if auth_state.failed?
+        break if auth_state.failed?
       end
+      return if auth_state.failed?
 
       complete_authentication(auth_state)
     end
 
     private def process_authentication_line(line : String, auth_state : AuthenticationState) : Nil
-      payload = FastIRC.parse_line(line)
+      payload = FastIRC.parse_line(line, strict: true)
       case payload.command
       when "PASS"
         process_pass_command(payload, auth_state)
@@ -141,7 +130,15 @@ module Circed
         return
       end
 
-      @name = payload.params[0]? || "unknown"
+      server_name = payload.params[0]? || "unknown"
+      if server_name == Server.name || Network::NetworkState.get_server(server_name)
+        Log.error { "Server #{server_name} introduced a duplicate route" }
+        send_error("Server #{server_name} already exists")
+        auth_state.failed = true
+        return
+      end
+
+      @name = server_name
       auth_state.server_introduced = true
       Log.info { "Server #{@name} introduced from #{@target_host}" }
 
@@ -173,17 +170,13 @@ module Circed
       return unless socket_ref = socket
 
       begin
-        until socket_ref.closed?
-          FastIRC.parse(socket_ref) do |payload|
-            dispatch_command(payload)
-          end
-
-          if closed?
-            Log.info { "Server connection closed: #{@name}" }
-            handle_disconnect("Connection lost")
-            break
-          end
+        reader = FastIRC::Reader.new(socket_ref, strict: true)
+        while payload = reader.next
+          dispatch_command(payload)
         end
+
+        Log.info { "Server connection closed: #{@name}" }
+        handle_disconnect("Connection lost")
       rescue ex : IO::Error | OpenSSL::SSL::Error
         Log.warn { "Server connection lost for #{@name}: #{ex.message}" }
         handle_disconnect("Connection lost")
@@ -205,7 +198,7 @@ module Circed
         handle_messaging_commands(payload)
       when "JOIN", "PART", "QUIT", "NICK", "MODE"
         handle_user_state_change(payload)
-      when "KILL", "NJOIN"
+      when "KILL", "NJOIN", Domain::LineBan::GLINE
         handle_admin_commands(payload)
       when "EOB", "LINKS", "STATS", "TIME", "VERSION", "ADMIN"
         Network::BurstProtocol.process_burst_message(payload.command, payload.params, self)
@@ -240,6 +233,7 @@ module Circed
         handle_message_delivery(payload)
       when "TOPIC"
         handle_topic_change(payload)
+        forward_message_to_peers(payload)
       when "AWAY"
         handle_away_change(payload)
       when "WALLOPS"
@@ -253,23 +247,33 @@ module Circed
         Commands::ServerCommands.kill(self, payload.params)
       when "NJOIN"
         Commands::ServerCommands.njoin(self, payload.params)
+      when Domain::LineBan::GLINE
+        Commands::ServerCommands.gline(self, payload.params)
       end
     end
 
     def handle_server_message(payload)
+      unless @registered
+        return if payload.params.size < 3
+
+        setup([payload.params[0]])
+        return
+      end
+
       return if payload.params.size < 4
 
       server_name = payload.params[0]
       hopcount = payload.params[1].to_i? || 0
       token = payload.params[2]
-      description = payload.params[3..]?.try(&.join(" ")) || ""
-      description = description.lstrip(':')
+      description = Utils::IrcUtils.trailing_param(payload.params, 3)
 
       Log.info { "Remote server introducing: #{server_name} (hopcount: #{hopcount + 1})" }
 
-      # Add to network state
-      Network::NetworkState.add_server(server_name, hopcount + 1, description, nil, token)
-      Network::NetworkState.add_server_link(@name, server_name)
+      unless Network::NetworkState.add_server(server_name, hopcount + 1, description, nil, token) &&
+             Network::NetworkState.add_server_link(@name, server_name)
+        send_error("Server #{server_name} already exists")
+        return
+      end
 
       # Forward to other servers
       forward_message_to_peers(payload)
@@ -278,7 +282,12 @@ module Circed
     def handle_user_state_change(payload)
       user_introduction = user_introduction?(payload)
 
-      if payload.command == "NICK" && !user_introduction
+      if user_introduction
+        forward_message_to_peers(payload) if handle_user_introduction(payload)
+        return
+      end
+
+      if payload.command == "NICK"
         deliver_state_change_to_local_users(payload)
         handle_nick_change(payload)
         forward_message_to_peers(payload)
@@ -292,6 +301,7 @@ module Circed
         return
       end
 
+      internal_mode = false
       case payload.command
       when "NICK"
         handle_nick_change(payload)
@@ -302,21 +312,16 @@ module Circed
       when "QUIT"
         handle_quit_message(payload)
       when "MODE"
-        handle_mode_message(payload)
+        internal_mode = handle_mode_message(payload)
       end
 
       # Forward to other servers and local clients
       forward_message_to_peers(payload)
-      deliver_state_change_to_local_users(payload) unless user_introduction
+      deliver_state_change_to_local_users(payload) unless internal_mode
     end
 
     def handle_nick_change(payload)
       return if payload.params.empty?
-
-      if user_introduction?(payload)
-        handle_user_introduction(payload)
-        return
-      end
 
       old_nick = extract_nickname(payload)
       new_nick = payload.params[0]
@@ -328,10 +333,7 @@ module Circed
 
         # Update channel memberships
         Network::NetworkState.channels.each_value do |channel|
-          if channel.members.has_key?(old_nick)
-            modes = channel.members.delete(old_nick)
-            channel.members[new_nick] = modes if modes
-          end
+          channel.rename_member(old_nick, new_nick)
         end
       end
 
@@ -341,28 +343,32 @@ module Circed
     end
 
     private def handle_user_introduction(payload)
-      return if payload.params.size < 7
+      return false if payload.params.size < 8
 
       nickname = payload.params[0]
       hopcount = payload.params[1].to_i? || 1
-      username = payload.params[2]
-      hostname = payload.params[3]
-      modes = payload.params[5]
-      realname = payload.params[6..]?.try(&.join(" ")) || ""
-      realname = realname.lstrip(':')
+      connected_at = Time.unix(payload.params[2].to_i64? || Time.utc.to_unix)
+      username = payload.params[3]
+      hostname = payload.params[4]
+      server_name = payload.params[5]
+      modes = payload.params[6]
+      realname = Utils::IrcUtils.trailing_param(payload.params, 7)
 
-      Network::NetworkState.add_user(nickname, username, hostname, realname, @name, hopcount)
+      return false unless Network::NetworkState.add_user(
+                            nickname, username, hostname, realname, server_name, hopcount, connected_at
+                          )
 
       if modes.starts_with?('+')
         user = Network::NetworkState.get_user(nickname)
-        modes[1..].each_char { |mode| user.try(&.modes.<<(mode)) }
+        modes.each_char { |mode| user.try(&.modes.<<(mode)) unless mode == '+' }
       end
 
       Log.debug { "Introduced remote user #{nickname} from #{@name}" }
+      true
     end
 
     private def user_introduction?(payload) : Bool
-      payload.command == "NICK" && payload.prefix.nil? && payload.params.size >= 7
+      payload.command == "NICK" && payload.prefix.nil? && payload.params.size >= 8
     end
 
     def handle_join_message(payload)
@@ -397,36 +403,52 @@ module Circed
       Log.debug { "User #{nickname} quit" }
     end
 
-    def handle_mode_message(payload)
-      return if payload.params.size < 2
+    def handle_mode_message(payload) : Bool
+      return false if payload.params.size < 2
 
       target = payload.params[0]
-      modes = payload.params[1]
+      if timestamp = payload.params[1].to_i64?
+        modes = payload.params[2]? || "+"
+        created_at = Time.unix(timestamp)
+        parameter_index = 3
+        internal_mode = true
+      else
+        modes = payload.params[1]
+        created_at = nil
+        parameter_index = 2
+        internal_mode = false
+      end
 
-      if target.starts_with?('#') || target.starts_with?('&')
-        # Channel mode change
-        if channel = Network::NetworkState.get_channel(target)
-          parse_modes(channel.modes, modes)
-        end
+      if Utils::IrcUtils.valid_channel_name?(target)
+        Network::NetworkState.apply_channel_modes(target, modes, payload.params, created_at, parameter_index)
       elsif user = Network::NetworkState.get_user(target)
         parse_modes(user.modes, modes)
       end
 
       Log.debug { "Mode change on #{target}: #{modes}" }
+      internal_mode
     end
 
     def handle_topic_change(payload)
       return if payload.params.size < 2
 
       channel_name = payload.params[0]
-      topic = payload.params[1..]?.try(&.join(" ")) || ""
-      topic = topic.lstrip(':')
-
-      if channel = Network::NetworkState.get_channel(channel_name)
-        channel.topic = topic
-        channel.topic_set_by = payload.prefix.try(&.source)
-        channel.topic_set_at = Time.utc
+      if payload.params.size >= 5 && (channel_timestamp = payload.params[1].to_i64?) &&
+         (topic_timestamp = payload.params[2].to_i64?)
+        topic = Utils::IrcUtils.trailing_param(payload.params, 4)
+        updated = Network::NetworkState.set_channel_topic(
+          channel_name,
+          topic,
+          payload.params[3],
+          Time.unix(topic_timestamp),
+          Time.unix(channel_timestamp)
+        )
+      else
+        topic = Utils::IrcUtils.trailing_param(payload.params, 1)
+        updated = Network::NetworkState.set_channel_topic(channel_name, topic, payload.prefix.try(&.source))
       end
+
+      Network::NetworkState.sync_channel_repository(channel_name) if updated
 
       Log.debug { "Topic change for #{channel_name}: #{topic}" }
     end
@@ -435,22 +457,17 @@ module Circed
       return if payload.params.empty?
 
       nickname = payload.params[0]
-      away_msg = payload.params[1..]?.try(&.join(" "))
-      away_msg = away_msg.try(&.lstrip(':'))
+      away_msg = payload.params.size > 1 ? Utils::IrcUtils.trailing_param(payload.params, 1) : nil
 
-      if user = Network::NetworkState.get_user(nickname)
-        user.away_message = away_msg
-      end
+      Network::NetworkState.set_user_away(nickname, away_msg)
 
       Log.debug { "Away status change for #{nickname}" }
     end
 
     private def forward_message_to_peers(payload : FastIRC::Message) : Nil
-      message = String.build { |io| payload.to_s(io) }
-
       ServerHandler.servers.each do |server|
         next if server == self
-        server.send_message(message)
+        server.send_message(payload)
       end
     end
 
@@ -480,10 +497,22 @@ module Circed
       @pingpong = Pingpong.new(self)
       @name = params[0]
 
+      if @name == Server.name || Network::NetworkState.get_server(@name)
+        @disconnected = true
+        send_error("Server #{@name} already exists")
+        return
+      end
+
       # Add to server handler and network state
       ServerHandler.add_server(self)
-      Network::NetworkState.add_server(@name, 1, "Connected Server", self)
-      Network::NetworkState.add_server_link(Server.name, @name)
+      unless Network::NetworkState.add_server(@name, 1, "Connected Server", self) &&
+             Network::NetworkState.add_server_link(Server.name, @name)
+        ServerHandler.remove_server(self)
+        @disconnected = true
+        send_error("Server #{@name} creates a duplicate route")
+        return
+      end
+      @registered = true
 
       # Start burst protocol - send our network state to the new server
       spawn do
@@ -511,11 +540,16 @@ module Circed
     end
 
     def safe_send(message : String) : Bool
-      return false if closed?
+      line = message.ends_with?("\r\n") ? message : "#{message}\r\n"
+      enqueue_line(line)
+    end
 
-      line = String.build(capacity: message.bytesize + 2) do |io|
-        io << message << "\r\n"
-      end
+    def safe_send(message : FastIRC::Message) : Bool
+      enqueue_line(String.build { |io| message.to_s(io) })
+    end
+
+    private def enqueue_line(line : String) : Bool
+      return false if closed?
 
       return write_to_socket(line) if @direct_writes
       return false if @outbound_messages.closed?
@@ -536,6 +570,15 @@ module Circed
       safe_send(message)
     end
 
+    def send_message(message : FastIRC::Message)
+      safe_send(message)
+    end
+
+    private def send_error(message : String) : Nil
+      safe_send("ERROR :#{message}")
+      close
+    end
+
     def close(reason : String = "Closing connection")
       Log.info { "Closing server connection to #{@name}: #{reason}" }
       cleanup_pingpong
@@ -543,8 +586,15 @@ module Circed
       # Send SQUIT and handle network cleanup
       handle_disconnect(reason)
 
-      close_outbound_queue
-      socket.try(&.close)
+      close_transport
+    end
+
+    def close_from_peer(reason : String)
+      Log.info { "Closing server connection to #{@name}: #{reason}" }
+      @disconnected = true
+      ServerHandler.remove_server(self)
+      cleanup_pingpong
+      close_transport
     end
 
     private def handle_disconnect(reason : String)
@@ -573,8 +623,12 @@ module Circed
     end
 
     private def cleanup_pingpong
-      @pingpong.try(&.stop_ping)
-      @pingpong.try(&.stop_pong_check)
+      @pingpong.try(&.stop)
+    end
+
+    private def close_transport
+      close_outbound_queue
+      socket.try(&.close)
     end
 
     private def start_outbound_writer : Nil
@@ -585,34 +639,11 @@ module Circed
 
     private def outbound_writer_loop : Nil
       while first_message = @outbound_messages.receive?
-        batch = build_outbound_batch(first_message)
+        batch = OutboundBatch.build(@outbound_messages, first_message, OUTBOUND_BATCH_MESSAGES, OUTBOUND_BATCH_BYTES)
         break unless write_to_socket(batch)
       end
     ensure
       close_outbound_queue
-    end
-
-    private def build_outbound_batch(first_message : String) : String
-      message_count = 1
-      byte_count = first_message.bytesize
-
-      String.build(capacity: first_message.bytesize) do |io|
-        io << first_message
-
-        loop do
-          break if message_count >= OUTBOUND_BATCH_MESSAGES || byte_count >= OUTBOUND_BATCH_BYTES
-
-          select
-          when next_message = @outbound_messages.receive?
-            break unless next_message
-            io << next_message
-            message_count += 1
-            byte_count += next_message.bytesize
-          else
-            break
-          end
-        end
-      end
     end
 
     private def write_to_socket(message : String) : Bool
@@ -631,7 +662,7 @@ module Circed
     end
 
     private def close_outbound_queue : Nil
-      @outbound_messages.close unless @outbound_messages.closed?
+      @outbound_messages.close
     end
 
     def handle_message(message)
@@ -659,7 +690,7 @@ module Circed
       message = payload.params[1]? || ""
       sender_nick = extract_nickname(payload)
 
-      if target.starts_with?('#') || target.starts_with?('&')
+      if Utils::IrcUtils.valid_channel_name?(target)
         # Channel message - deliver to all local users in channel
         deliver_to_local_channel(target, payload, sender_nick, message)
       else
@@ -673,7 +704,7 @@ module Circed
         user_repository = Infrastructure::ServiceLocator.user_repository
 
         channel.members.each_key do |local_nick|
-          next if local_nick == sender_nick
+          next if Domain::CaseMapping.same?(local_nick, sender_nick)
 
           if client = user_repository.get_client(local_nick)
             formatted_message = format_message_for_client(payload, message)
@@ -746,19 +777,16 @@ module Circed
       sender_nick = extract_nickname(payload)
       message = format_state_change_message(payload)
 
-      # Send QUIT to all local users who shared channels with this user
-      send_quit_to_shared_local_users(sender_nick, message)
+      send_to_shared_local_users(sender_nick, message)
     end
 
     private def deliver_nick_to_local_users(payload)
       return if payload.params.empty?
 
       old_nick = extract_nickname(payload)
-      # new_nick = payload.params[0]  # Removed unused variable
       message = format_state_change_message(payload)
 
-      # Send NICK change to all local users who shared channels with this user
-      send_nick_to_shared_local_users(old_nick, message)
+      send_to_shared_local_users(old_nick, message)
     end
 
     private def deliver_mode_to_local_users(payload)
@@ -766,7 +794,7 @@ module Circed
 
       target = payload.params[0]
 
-      if target.starts_with?('#') || target.starts_with?('&')
+      if Utils::IrcUtils.valid_channel_name?(target)
         # Channel mode change
         message = format_state_change_message(payload)
         send_to_local_channel_members(target, message)
@@ -775,37 +803,24 @@ module Circed
 
     private def format_state_change_message(payload) : String
       sender_nick = extract_nickname(payload)
-
-      if user_info = Network::NetworkState.get_user(sender_nick)
-        hostmask = "#{sender_nick}!#{user_info.username}@#{user_info.hostname}"
-        ":#{hostmask} #{payload.command}#{format_params(payload.params)}"
-      else
-        # Fallback
-        ":#{sender_nick}!unknown@unknown #{payload.command}#{format_params(payload.params)}"
-      end
-    end
-
-    private def format_params(params : Array(String)) : String
-      return "" if params.empty?
-
-      String.build do |io|
-        params.each_with_index do |param, index|
-          io << ' '
-          if index == params.size - 1 && (param.empty? || param.includes?(' ') || param.starts_with?(':'))
-            io << ':'
-            io << param.lstrip(':')
-          else
-            io << param
-          end
-        end
-      end
+      prefix = if user_info = Network::NetworkState.get_user(sender_nick)
+                 FastIRC::Prefix.new(source: sender_nick, user: user_info.username, host: user_info.hostname)
+               else
+                 FastIRC::Prefix.new(source: sender_nick, user: "unknown", host: "unknown")
+               end
+      FastIRC::Message.new(
+        payload.command,
+        payload.params,
+        prefix: prefix,
+        tags: payload.tags?
+      ).to_s
     end
 
     private def send_to_local_channel_members(channel_name : String, message : String, exclude_nick : String? = nil)
       if channel = Network::NetworkState.get_channel(channel_name)
         user_repository = Infrastructure::ServiceLocator.user_repository
         channel.members.each_key do |local_nick|
-          next if exclude_nick && local_nick == exclude_nick
+          next if exclude_nick && Domain::CaseMapping.same?(local_nick, exclude_nick)
 
           if client = user_repository.get_client(local_nick)
             client.send_message(message)
@@ -814,41 +829,18 @@ module Circed
       end
     end
 
-    private def send_quit_to_shared_local_users(remote_nick : String, message : String)
-      # Collect all local users who shared channels (avoid duplicates)
+    private def send_to_shared_local_users(remote_nick : String, message : String)
       user_repository = Infrastructure::ServiceLocator.user_repository
-      local_users = Set(String).new
+      notified = Set(String).new
       Network::NetworkState.channels.each_value do |channel|
-        next unless channel.members.has_key?(remote_nick)
+        next unless channel.has_member?(remote_nick)
 
         channel.members.each_key do |nick|
-          local_users << nick if user_repository.get_client(nick)
-        end
-      end
-
-      # Send QUIT message to each local user
-      local_users.each do |local_nick|
-        if client = user_repository.get_client(local_nick)
-          client.send_message(message)
-        end
-      end
-    end
-
-    private def send_nick_to_shared_local_users(old_nick : String, message : String)
-      # Similar to QUIT - find all local users who shared channels
-      user_repository = Infrastructure::ServiceLocator.user_repository
-      local_users = Set(String).new
-      Network::NetworkState.channels.each_value do |channel|
-        next unless channel.members.has_key?(old_nick)
-
-        channel.members.each_key do |nick|
-          local_users << nick if user_repository.get_client(nick)
-        end
-      end
-
-      local_users.each do |local_nick|
-        if client = user_repository.get_client(local_nick)
-          client.send_message(message)
+          next if notified.includes?(nick)
+          if client = user_repository.get_client(nick)
+            notified << nick
+            client.send_message(message)
+          end
         end
       end
     end

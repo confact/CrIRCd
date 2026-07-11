@@ -20,7 +20,7 @@ A Crystal IRC server implementation that follows IRC protocol specifications. Wh
 * Activity and signon time tracking
 * IRC operator authentication with `OPER`
 * Oper-only administrative commands: `KILL`, `REHASH`, `CONNECT`, `SQUIT`,
-  `DIE`, and `RESTART`
+  `DIE`, `RESTART`, `KLINE`, `GLINE`, and `ZLINE`
 
 ### Network & Security
 * **SSL/TLS Support** - Secure connections for clients and servers
@@ -32,7 +32,6 @@ A Crystal IRC server implementation that follows IRC protocol specifications. Wh
 * Additional channel and user modes
 
 ### Not Implemented
-* Network-wide GLines
 * NickServ, ChanServ, and persistent IRC services
 
 
@@ -55,6 +54,7 @@ port: 6667
 network: "MyIRCNetwork"
 max_users: 100
 link_password: "server_link_password"
+line_database: "data/lines.yml"
 allow_die: false
 allow_restart: false
 ```
@@ -70,6 +70,15 @@ Operators can use `KILL <nickname> :<reason>` to disconnect users, `REHASH` to
 reload config, `CONNECT` to start a configured server link, and `SQUIT` to drop
 a server link. `DIE` and `RESTART` are disabled by default and require
 `allow_die: true` or `allow_restart: true`.
+
+CrIRCd supports IRCd-style line bans for operators. These are common IRCd
+extensions, not RFC core commands. `KLINE <user@host> [duration] :<reason>` adds
+a local user@host ban, `GLINE <user@host> [duration] :<reason>` adds a
+network-wide user@host ban across linked CrIRCd servers, and
+`ZLINE <ip-or-cidr> [duration] :<reason>` adds a local IP ban. Calling the same
+command with only a mask removes the line, for example `GLINE *@bad.example`.
+Durations can be seconds or compound values like `1w2d3h`; omit the duration or
+use `0` for a permanent line. Active lines are stored in `line_database`.
 
 Users can set `MODE <nick> +w` to receive wallops notices from linked servers.
 CrIRCd treats `WALLOPS` as a server-originated command and does not expose it as
@@ -203,7 +212,7 @@ CrIRCd currently supports these client-facing commands:
 Server-to-server links support handshake, burst, channel membership, user state,
 message routing, and basic server query propagation.
 
-Unsupported areas include network GLines and persistent IRC services.
+Unsupported areas include persistent IRC services.
 
 ## Configuration Reload
 
@@ -288,6 +297,7 @@ Configure encrypted server links:
 ```yaml
 linked_servers:
   - host: "irc2.example.com"
+    server_name: "irc2.example.com"
     port: 6697
     link_password: "secure_password"
     use_ssl: true

@@ -2,7 +2,11 @@ require "../../spec_helper"
 
 describe "Netsplit QUIT message format" do
   before_each do
-    Circed::Network::NetworkState.clear_all_state
+    clear_repositories
+  end
+
+  after_each do
+    clear_repositories
   end
 
   describe "RFC-compliant QUIT messages" do
@@ -19,11 +23,11 @@ describe "Netsplit QUIT message format" do
       # Build the QUIT message as the code does
       quit_message = String.build do |io|
         io << ':' << user_info.hostmask << " QUIT :"
-        io << "server1.irc" << ' ' << Circed::Server.name
+        io << Circed::Server.name << ' ' << "server1.irc"
       end
 
       # Should match RFC format: :nick!user@host QUIT :server1 server2
-      quit_message.should match(/^:alice!alice@server1\.host QUIT :server1\.irc \S+/)
+      quit_message.should match(/^:alice!alice@server1\.host QUIT :\S+ server1\.irc/)
     end
 
     it "preserves user hostmask during netsplit" do
@@ -42,17 +46,25 @@ describe "Netsplit QUIT message format" do
   end
 
   describe "QUIT message propagation" do
-    it "sends QUIT to all local users in shared channels" do
+    it "sends QUIT only to local users in shared channels" do
       # Setup network topology
       Circed::Network::NetworkState.add_server("server1.irc", 1, "Server 1", nil, "101")
       Circed::Network::NetworkState.add_server_link("localhost", "server1.irc")
 
+      shared_user = create_test_client("Alice")
+      unrelated_user = create_test_client("Bob")
+
+      Circed::Network::NetworkState.add_user("Alice", "alice", "local.host", "Alice", Circed::Server.name)
+      Circed::Network::NetworkState.add_user("Bob", "bob", "local.host", "Bob", Circed::Server.name)
+
       # Add remote user
       Circed::Network::NetworkState.add_user("remote_user", "remote", "server1.host", "Remote", "server1.irc", 1)
 
-      # Add channel with remote user
+      # Only Alice shares a channel with the remote user.
       Circed::Network::NetworkState.add_channel("#shared")
       Circed::Network::NetworkState.join_user_to_channel("remote_user", "#shared")
+      Circed::Network::NetworkState.join_user_to_channel("Alice", "#shared")
+      Circed::Network::NetworkState.join_user_to_channel("Bob", "#unrelated")
 
       # Verify user is in channel before split
       channel = Circed::Network::NetworkState.get_channel("#shared")
@@ -62,6 +74,9 @@ describe "Netsplit QUIT message format" do
       # Trigger netsplit
       Circed::Network::NetworkState.remove_server("server1.irc")
 
+      shared_user.socket.as(DummySocket).sent_data.join.should contain(" QUIT :")
+      unrelated_user.socket.as(DummySocket).sent_data.join.should_not contain(" QUIT :")
+
       # User should be removed from channel
       channel = Circed::Network::NetworkState.get_channel("#shared")
       if channel
@@ -70,17 +85,18 @@ describe "Netsplit QUIT message format" do
     end
 
     it "avoids duplicate QUIT messages to same local user" do
-      # This is tested via the Set(String) tracking in send_quit_to_local_users
-      # The implementation uses local_users_notified to prevent duplicates
+      local_user = create_test_client("Local")
 
-      # Setup multiple channels with same users
+      # Setup multiple channels shared by the same local and remote users.
       Circed::Network::NetworkState.add_server("server1.irc", 1, "Server 1", nil, "101")
       Circed::Network::NetworkState.add_user("alice", "alice", "server1.host", "Alice", "server1.irc", 1)
+      Circed::Network::NetworkState.add_user("Local", "local", "local.host", "Local", Circed::Server.name)
 
       # Add user to multiple channels
       ["#chan1", "#chan2", "#chan3"].each do |chan|
         Circed::Network::NetworkState.add_channel(chan)
         Circed::Network::NetworkState.join_user_to_channel("alice", chan)
+        Circed::Network::NetworkState.join_user_to_channel("Local", chan)
       end
 
       # All channels should have alice
@@ -92,6 +108,8 @@ describe "Netsplit QUIT message format" do
 
       # Remove server (this should only send one QUIT per local user)
       Circed::Network::NetworkState.remove_server("server1.irc")
+
+      local_user.socket.as(DummySocket).sent_data.count(&.includes?(" QUIT :")).should eq(1)
 
       # User should be gone from all channels
       ["#chan1", "#chan2", "#chan3"].each do |chan|

@@ -1,13 +1,13 @@
 require "./base_action"
 
 module Circed
-  class Actions::Kick < Actions::ChannelAction
+  class Actions::Kick < Actions::BaseAction
     protected def self.execute_action(sender : Client, message : Array(String)) : Nil
       Log.debug { "kick: #{message}" }
 
-      channel_names = split_list_param(message.first)
-      kicked_nicknames = split_list_param(message[1])
-      reason = message[2..-1].join(" ") if message.size > 2
+      channel_names = Utils::IrcUtils.split_list_param(message.first)
+      kicked_nicknames = Utils::IrcUtils.split_list_param(message[1])
+      reason = Utils::IrcUtils.trailing_param(message, 2) if message.size > 2
       irc_service = Infrastructure::ServiceLocator.irc_service
 
       if channel_names.size == 1
@@ -26,10 +26,6 @@ module Circed
       else
         sender.send_message(Server.clean_name, Numerics::ERR_NEEDMOREPARAMS, sender.nickname || "*", "KICK", ":Not enough parameters")
       end
-    end
-
-    private def self.split_list_param(param : String) : Array(String)
-      param.split(',', remove_empty: true)
     end
   end
 end

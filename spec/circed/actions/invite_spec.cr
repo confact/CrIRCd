@@ -16,7 +16,7 @@ describe Circed::Actions::Invite do
     Circed::Actions::Invite.call(sender, "Bob", "#new")
 
     sender.socket.as(DummySocket).sent_data.join.should contain(" 341 Alice Bob #new")
-    invited.socket.as(DummySocket).sent_data.join.should contain(" INVITE Bob :#new")
+    invited.socket.as(DummySocket).sent_data.join.should contain(" INVITE Bob #new")
   end
 
   it "requires an operator to invite into an invite-only channel" do
@@ -29,7 +29,7 @@ describe Circed::Actions::Invite do
     Circed::Actions::Invite.call(sender, "Bob", "#invite-only")
 
     sender.socket.as(DummySocket).sent_data.join.should contain(" 482 Alice #invite-only")
-    invited.socket.as(DummySocket).sent_data.join.should_not contain(" INVITE Bob :#invite-only")
+    invited.socket.as(DummySocket).sent_data.join.should_not contain(" INVITE Bob #invite-only")
   end
 
   it "records an invite from an operator for an invite-only channel" do
@@ -43,6 +43,16 @@ describe Circed::Actions::Invite do
     Circed::Actions::Invite.call(sender, "Bob", "#invite-only")
 
     channel.invited?("Bob").should be_true
-    invited.socket.as(DummySocket).sent_data.join.should contain(" INVITE Bob :#invite-only")
+    invited.socket.as(DummySocket).sent_data.join.should contain(" INVITE Bob #invite-only")
+  end
+
+  it "reports the invited user's away status" do
+    sender = create_test_client("Alice")
+    create_test_client("Bob")
+    user_repository["Bob"]?.try(&.away_message = "Lunch")
+
+    Circed::Actions::Invite.call(sender, "Bob", "#new")
+
+    sender.socket.as(DummySocket).sent_data.join.should contain(" 301 Alice Bob Lunch")
   end
 end

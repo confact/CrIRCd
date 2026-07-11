@@ -2,8 +2,11 @@ require "../../spec_helper"
 
 describe Circed::Network::NetworkState do
   before_each do
-    # Clear network state before each test
-    Circed::Network::NetworkState.clear_all_state
+    clear_repositories
+  end
+
+  after_each do
+    clear_repositories
   end
 
   describe "netsplit handling" do
@@ -18,6 +21,7 @@ describe Circed::Network::NetworkState do
       # Add channel with user
       Circed::Network::NetworkState.add_channel("#test")
       Circed::Network::NetworkState.join_user_to_channel("alice", "#test")
+      channel_repository.add_member("#test", "alice")
 
       # Verify initial state
       Circed::Network::NetworkState.stats[:servers].should eq(1)
@@ -31,6 +35,7 @@ describe Circed::Network::NetworkState do
       Circed::Network::NetworkState.stats[:servers].should eq(0)
       Circed::Network::NetworkState.stats[:users].should eq(0)
       Circed::Network::NetworkState.get_channel("#test").should be_nil
+      channel_repository["#test"]?.should be_nil
     end
 
     it "handles transitive server disconnection" do
@@ -163,6 +168,37 @@ describe Circed::Network::NetworkState do
   end
 
   describe "network topology management" do
+    it "streams servers matching a mask" do
+      Circed::Network::NetworkState.add_server("one.irc", 1, "One")
+      Circed::Network::NetworkState.add_server("two.test", 1, "Two")
+
+      names = Circed::Network::NetworkState.server_list("*.irc").map(&.name).to_a
+      names.should eq(["one.irc"])
+    end
+
+    it "finds the first hop on the shortest route" do
+      Circed::Network::NetworkState.add_server_link("localhost", "one.irc")
+      Circed::Network::NetworkState.add_server_link("one.irc", "two.irc")
+      Circed::Network::NetworkState.add_server_link("two.irc", "target.irc")
+
+      Circed::Network::NetworkState.route_to_server("target.irc", "localhost").should eq("one.irc")
+    end
+
+    it "rejects cyclic server links" do
+      Circed::Network::NetworkState.add_server_link("localhost", "one.irc").should be_true
+      Circed::Network::NetworkState.add_server_link("one.irc", "two.irc").should be_true
+
+      Circed::Network::NetworkState.add_server_link("two.irc", "localhost").should be_false
+      Circed::Network::NetworkState.topology["two.irc"].includes?("localhost").should be_false
+    end
+
+    it "rejects duplicate server routes without replacing server state" do
+      Circed::Network::NetworkState.add_server("one.irc", 1, "Original").should be_true
+
+      Circed::Network::NetworkState.add_server("one.irc", 2, "Duplicate").should be_false
+      Circed::Network::NetworkState.get_server("one.irc").try(&.description).should eq("Original")
+    end
+
     it "correctly identifies disconnected servers" do
       # This tests the private method indirectly through remove_server
       Circed::Network::NetworkState.add_server("intermediate.irc", 1, "Intermediate", nil, "201")

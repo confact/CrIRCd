@@ -11,10 +11,25 @@ describe Circed::LinkedServer do
 
       server = Circed::LinkedServer.from_yaml(yaml)
       server.host.should eq("irc.example.com")
+      server.irc_name.should eq("irc.example.com")
       server.port.should eq(6667)
       server.link_password.should eq("secret123")
       server.use_ssl?.should be_false
       server.verify_ssl?.should be_false
+    end
+
+    it "parses a separate IRC server name" do
+      yaml = <<-YAML
+        host: "192.0.2.10"
+        server_name: "irc.example.com"
+        port: 6667
+        link_password: "secret123"
+        YAML
+
+      server = Circed::LinkedServer.from_yaml(yaml)
+      server.host.should eq("192.0.2.10")
+      server.server_name.should eq("irc.example.com")
+      server.irc_name.should eq("irc.example.com")
     end
 
     it "parses SSL-enabled server configuration" do

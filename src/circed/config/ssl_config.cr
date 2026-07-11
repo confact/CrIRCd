@@ -32,34 +32,17 @@ module Circed
       def valid?
         return true unless enabled?
 
-        # Certificate file is required when SSL is enabled
         return false unless cert_file_path = cert_file
-        return false unless File.exists?(cert_file_path)
+        return false unless File.file?(cert_file_path) && File::Info.readable?(cert_file_path)
 
-        # Key file is required when SSL is enabled
         return false unless key_file_path = key_file
-        return false unless File.exists?(key_file_path)
+        return false unless File.file?(key_file_path) && File::Info.readable?(key_file_path)
 
-        # If CA file is specified, it must exist
         if ca_file_path = ca_file
-          return false unless File.exists?(ca_file_path)
+          return false unless File.file?(ca_file_path) && File::Info.readable?(ca_file_path)
         end
 
-        # Try to load and validate the certificate and key
-        begin
-          # Check if certificate can be read
-          cert_content = File.read(cert_file_path)
-          cert_content.empty?
-
-          # Check if key can be read
-          key_content = File.read(key_file_path)
-          key_content.empty?
-
-          true
-        rescue ex
-          Log.error { "SSL validation error: #{ex.message}" }
-          false
-        end
+        true
       end
     end
   end
