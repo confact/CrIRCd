@@ -661,9 +661,7 @@ module Circed
     end
 
     private def start_hostname_lookup(ip_address : String) : Channel(String?)?
-      return nil unless Infrastructure::Container.registered?(Services::DNSResolverService)
-
-      Infrastructure::ServiceLocator.dns_resolver_service.resolve_async(ip_address)
+      Infrastructure::ServiceLocator.dns_resolver_service?.try(&.resolve_async(ip_address))
     end
 
     private def remove_registered_client : Nil

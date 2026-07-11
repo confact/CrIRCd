@@ -25,8 +25,15 @@ A Crystal IRC server implementation that follows IRC protocol specifications. Wh
 ### Network & Security
 * **SSL/TLS Support** - Secure connections for clients and servers
 * **Server-to-Server Communication** - Build IRC networks with multiple linked servers
-* **Server Link Recovery** - Configured outgoing links retry with capped backoff
+* **Server Link Recovery** - Configured outgoing links retry with capped backoff,
+  clean up unreachable servers and users after a netsplit, and burst current
+  network state after reconnecting
 * **STARTTLS** - Upgrade plain connections to encrypted
+* **Flood Protection** - Per-client token-bucket command rate limiting, with
+  higher costs for expensive queries
+* **Protocol Limits** - Enforces the IRC 512-byte input-line limit
+* **Slow-client Protection** - Bounded, batched outbound queues prevent socket
+  writes from blocking command and channel fanout
 
 ### Planned Features
 * Additional channel and user modes
@@ -206,11 +213,13 @@ CrIRCd currently supports these client-facing commands:
 * Channels: `JOIN`, `PART`, `MODE`, `TOPIC`, `INVITE`, `KICK`, `NAMES`, `LIST`,
   `WHO`
 * Operator commands: `OPER`, `KILL`, `REHASH`, `CONNECT`, `SQUIT`, `DIE`,
-  `RESTART`
-* User/server queries: `WHOIS`, `LINKS`, `STATS`, `TIME`, `VERSION`, `ADMIN`
+  `RESTART`, `KLINE`, `GLINE`, `ZLINE`
+* User/server queries: `WHOIS`, `ISON`, `USERHOST`, `LUSERS`, `MOTD`, `LINKS`,
+  `STATS`, `TIME`, `VERSION`, `ADMIN`
 
 Server-to-server links support handshake, burst, channel membership, user state,
-message routing, and basic server query propagation.
+message routing, global line-ban synchronization, server query propagation, and
+netsplit cleanup with state recovery after reconnection.
 
 Unsupported areas include persistent IRC services.
 
